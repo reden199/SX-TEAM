@@ -24,8 +24,6 @@ def keep_alive():
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
-# Remove o help padrão
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 # ================ SQLite local ================
@@ -140,13 +138,55 @@ async def sync_loop():
 @bot.event
 async def on_ready():
     print(f'{bot.user} online')
-    await bot.change_presence(activity=discord.Game("!help | Comandos"))
+    await bot.change_presence(activity=discord.Game("!help ou / | Comandos"))
     bot.loop.create_task(sync_loop())
 
 @bot.event
 async def on_message(message):
     if message.author.bot or not message.guild:
         return
+    
+    # Se a mensagem for apenas "/" mostra os comandos
+    if message.content.strip() == "/":
+        embed = discord.Embed(
+            title="Lista de Comandos",
+            description="Prefixo: `!`\nUse `!comando` para executar",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(
+            name="Moderacao",
+            value=(
+                "`!ban @usuario [motivo]` - Bane um usuario\n"
+                "`!unban Nome#1234` - Desbane um usuario\n"
+                "`!kick @usuario [motivo]` - Expulsa um usuario\n"
+                "`!mute @usuario [minutos]` - Muta um usuario\n"
+                "`!unmute @usuario` - Desmuta um usuario\n"
+                "`!lock` - Trava o canal\n"
+                "`!unlock` - Destrava o canal\n"
+                "`!delete <quantidade>` - Apaga mensagens"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="XP e Ranking",
+            value=(
+                "`!xp` - Mostra seu perfil\n"
+                "`!xp @usuario` - Mostra perfil de alguem\n"
+                "`!perfil` - Igual ao !xp\n"
+                "`!rank` - Top 5 do servidor\n"
+                "`!help` - Mostra esta lista"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="SX Team Bot - Sistema de Moderacao e XP")
+        
+        await message.channel.send(embed=embed)
+        return
+    
+    # Contagem de XP normal
     increment_count(message.guild.id, message.author.id)
     await bot.process_commands(message)
 
