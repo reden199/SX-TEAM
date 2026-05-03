@@ -32,22 +32,44 @@ CANAL_PERMITIDO = 1500291470530314331  # ID do canal onde os comandos são liber
 
 @bot.tree.interaction_check
 async def global_channel_restriction(interaction: discord.Interaction) -> bool:
-    # Administradores podem usar comandos em qualquer canal
+    # Administradores passam direto
     if interaction.user.guild_permissions.administrator:
         return True
 
-    # Verifica se o comando foi executado no canal permitido
+    # Canal permitido
     if interaction.channel_id == CANAL_PERMITIDO:
         return True
 
-    # Caso contrário, nega e avisa
-    await interaction.response.send_message(
-        f"❌ Comandos só podem ser usados no canal <#{CANAL_PERMITIDO}>. "
-        "Administradores podem usar em qualquer lugar.",
-        ephemeral=True
-    )
+    # Bloqueio – garante que a resposta seja enviada apenas uma vez
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"❌ Comandos só podem ser usados no canal <#{CANAL_PERMITIDO}>. "
+                "Administradores podem usar em qualquer lugar.",
+                ephemeral=True
+            )
+    except:
+        pass
     return False
 
+# ================ Check de canal para prefix commands ================
+def canal_restrito_texto():
+    async def predicate(ctx):
+        # Administradores podem usar em qualquer lugar
+        if ctx.author.guild_permissions.administrator:
+            return True
+        # Canal permitido
+        if ctx.channel.id == CANAL_PERMITIDO:
+            return True
+        # Bloqueia e avisa
+        await ctx.send(
+            f"❌ Comandos só podem ser usados no canal <#{CANAL_PERMITIDO}>. "
+            "Administradores podem usar em qualquer lugar.",
+            delete_after=10
+        )
+        return False
+    return commands.check(predicate)
+    
 # ================ SQLite local ================
 DB_FILENAME = 'xp_data.db'
 db_changed = False
