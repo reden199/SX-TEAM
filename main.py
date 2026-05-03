@@ -3,6 +3,7 @@ import sqlite3
 import asyncio
 import discord
 import datetime
+import traceback
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask
@@ -32,15 +33,10 @@ CANAL_PERMITIDO = 1500291470530314331  # ID do canal onde os comandos são liber
 
 @bot.tree.interaction_check
 async def global_channel_restriction(interaction: discord.Interaction) -> bool:
-    # Administradores passam direto
     if interaction.user.guild_permissions.administrator:
         return True
-
-    # Canal permitido
     if interaction.channel_id == CANAL_PERMITIDO:
         return True
-
-    # Bloqueio – garante que a resposta seja enviada apenas uma vez
     try:
         if not interaction.response.is_done():
             await interaction.response.send_message(
@@ -52,19 +48,12 @@ async def global_channel_restriction(interaction: discord.Interaction) -> bool:
         pass
     return False
 
-# ================ Check global de canal para TODOS os prefix commands ================
 @bot.check
 async def global_text_channel_restriction(ctx):
-    """Bloqueia qualquer comando de texto fora do canal permitido (exceto admins)."""
-    # Administradores podem usar em qualquer lugar
     if ctx.author.guild_permissions.administrator:
         return True
-
-    # Canal permitido
     if ctx.channel.id == CANAL_PERMITIDO:
         return True
-
-    # Bloqueia e avisa
     await ctx.send(
         f"❌ Comandos só podem ser usados no canal <#{CANAL_PERMITIDO}>. "
         "Administradores podem usar em qualquer lugar.",
@@ -73,38 +62,51 @@ async def global_text_channel_restriction(ctx):
     return False
     
 # ================ SQLite local ================
-DB_FILENAME = 'xp_data.db'
+DB_FILENAME = os.path.join(os.getcwd(), 'xp_data.db')  # caminho absoluto
 db_changed = False
 db_lock = asyncio.Lock()
 
 def init_db():
-    conn = sqlite3.connect(DB_FILENAME)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS counts (
-        guild_id TEXT, user_id TEXT, count INTEGER DEFAULT 0,
-        PRIMARY KEY (guild_id, user_id))''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILENAME)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS counts (
+            guild_id TEXT, user_id TEXT, count INTEGER DEFAULT 0,
+            PRIMARY KEY (guild_id, user_id))''')
+        conn.commit()
+        conn.close()
+        print("Banco local criado/verificado com sucesso.")
+    except Exception as e:
+        print(f"ERRO ao inicializar banco local: {e}")
+        traceback.print_exc()
 
 def increment_count(guild_id, user_id):
     global db_changed
-    conn = sqlite3.connect(DB_FILENAME)
-    c = conn.cursor()
-    c.execute('''INSERT INTO counts (guild_id, user_id, count) VALUES (?,?,1)
-                 ON CONFLICT(guild_id, user_id) DO UPDATE SET count = count + 1''',
-              (str(guild_id), str(user_id)))
-    conn.commit()
-    conn.close()
-    db_changed = True
+    try:
+        conn = sqlite3.connect(DB_FILENAME)
+        c = conn.cursor()
+        c.execute('''INSERT INTO counts (guild_id, user_id, count) VALUES (?,?,1)
+                     ON CONFLICT(guild_id, user_id) DO UPDATE SET count = count + 1''',
+                  (str(guild_id), str(user_id)))
+        conn.commit()
+        conn.close()
+        db_changed = True
+        print(f"XP incrementado para {user_id} no servidor {guild_id}")
+    except Exception as e:
+        print(f"ERRO ao incrementar contagem: {e}")
 
 def get_count(guild_id, user_id):
-    conn = sqlite3.connect(DB_FILENAME)
-    c = conn.cursor()
-    c.execute('SELECT count FROM counts WHERE guild_id=? AND user_id=?',
-              (str(guild_id), str(user_id)))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else 0
+    try:
+        conn = sqlite3.connect(DB_FILENAME)
+        c = conn.cursor()
+        c.execute('SELECT count FROM counts WHERE guild_id=? AND user_id=?',
+                  (str(guild_id), str(user_id)))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else 0
+    except Exception as e:
+        print(f"ERRO ao obter contagem: {e}")
+        return 0
 
 # ================ Google Drive ================
 FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID')
@@ -115,7 +117,7 @@ def get_drive():
         "type": "service_account",
         "project_id": os.environ.get("GDRIVE_PROJECT_ID"),
         "private_key_id": os.environ.get("GDRIVE_PRIVATE_KEY_ID", ""),
-        "private_key": os.environ.get("GDRIVE_PRIVATE_KEY").replace('\\n', '\n'),
+        "private_key": os.environ.get("GDRIVE_PRIVATE_KEY", "").replace('\\n', '\n'),
         "client_email": os.environ.get("GDRIVE_CLIENT_EMAIL"),
         "client_id": os.environ.get("GDRIVE_CLIENT_ID", ""),
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -131,16 +133,19 @@ def get_drive():
 
 async def upload_to_drive():
     if not FOLDER_ID:
+        print("FOLDER_ID não definido, upload ignorado.")
         return
     global db_changed
     async with db_lock:
         try:
             drive = get_drive()
+            # Remove arquivos antigos
             file_list = drive.ListFile({
                 'q': f"'{FOLDER_ID}' in parents and title='{DRIVE_FILE_NAME}' and trashed=false"
             }).GetList()
             for f in file_list:
                 f.Delete()
+            # Upload do novo
             file_drive = drive.CreateFile({
                 'title': DRIVE_FILE_NAME,
                 'parents': [{'id': FOLDER_ID}]
@@ -150,10 +155,12 @@ async def upload_to_drive():
             db_changed = False
             print("Banco sincronizado com Google Drive.")
         except Exception as e:
-            print(f"Erro no upload para Drive: {e}")
+            print(f"ERRO no upload para Drive: {type(e).__name__}: {e}")
+            traceback.print_exc()
 
 async def download_from_drive():
     if not FOLDER_ID:
+        print("FOLDER_ID não definido, download ignorado.")
         return
     try:
         drive = get_drive()
@@ -169,12 +176,16 @@ async def download_from_drive():
         else:
             print("Nenhum banco encontrado no Drive, iniciando zerado.")
     except Exception as e:
-        print(f"Erro ao baixar do Drive: {e}")
+        print(f"ERRO ao baixar do Drive: {type(e).__name__}: {e}")
+        traceback.print_exc()
 
 async def sync_loop():
     await bot.wait_until_ready()
     await download_from_drive()
     init_db()
+    # Força o primeiro upload para garantir que o banco esteja no Drive
+    global db_changed
+    db_changed = True
     while not bot.is_closed():
         await asyncio.sleep(30)
         if db_changed:
@@ -202,7 +213,6 @@ async def on_message(message):
 # ================ Novo evento: boas-vindas e cargo automático ================
 @bot.event
 async def on_member_join(member):
-    # Cargo "Verificado" (ID fornecido)
     cargo_verificado = member.guild.get_role(1500257493270401206)
     if cargo_verificado:
         try:
@@ -211,7 +221,6 @@ async def on_member_join(member):
         except Exception as e:
             print(f"Erro ao adicionar cargo Verificado: {e}")
 
-    # Canal de boas-vindas (ID fornecido)
     canal_boasvindas = member.guild.get_channel(1500236759693266985)
     if canal_boasvindas:
         embed = discord.Embed(
@@ -219,10 +228,7 @@ async def on_member_join(member):
             description=f"{member.mention} acabou de entrar no servidor.",
             color=discord.Color.green()
         )
-        # Avatar do usuário como thumbnail (quadrado)
         embed.set_thumbnail(url=member.display_avatar.url)
-        # Se quiser o avatar redondo, seria necessário usar Pillow para criar uma imagem circular.
-        # No Discord o thumbnail sempre aparece quadrado.
         try:
             await canal_boasvindas.send(embed=embed)
         except Exception as e:
@@ -236,8 +242,6 @@ def get_level(xp):
     return xp // 10
 
 # ================ SLASH COMMANDS ================
-
-# --- MODERAÇÃO ---
 
 @bot.tree.command(name="ban", description="Bane um usuário do servidor")
 @app_commands.describe(membro="Usuário a ser banido", motivo="Motivo do banimento")
@@ -340,8 +344,6 @@ async def slash_unmute(interaction: discord.Interaction, membro: discord.Member)
     except Exception as e:
         await interaction.response.send_message(f"Erro ao desmutar: {e}", ephemeral=True)
 
-# --- GERENCIAMENTO DE CANAL ---
-
 @bot.tree.command(name="lock", description="Trava o canal atual")
 @app_commands.default_permissions(manage_channels=True)
 async def slash_lock(interaction: discord.Interaction):
@@ -366,8 +368,6 @@ async def slash_unlock(interaction: discord.Interaction):
     except Exception as e:
         await interaction.response.send_message(f"Erro ao destravar canal: {e}", ephemeral=True)
 
-# --- LIMPEZA ---
-
 @bot.tree.command(name="delete", description="Apaga uma quantidade de mensagens do canal")
 @app_commands.describe(quantidade="Número de mensagens a apagar (1-100)")
 @app_commands.default_permissions(manage_messages=True)
@@ -381,8 +381,6 @@ async def slash_delete(interaction: discord.Interaction, quantidade: int):
         await interaction.followup.send(f"{len(deleted)} mensagens apagadas.", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"Erro ao apagar mensagens: {e}", ephemeral=True)
-
-# --- XP / PERFIL / RANK ---
 
 @bot.tree.command(name="xp", description="Mostra o perfil e progresso de XP de um usuário")
 @app_commands.describe(membro="Usuário (deixe em branco para ver o seu)")
@@ -410,42 +408,42 @@ async def slash_xp(interaction: discord.Interaction, membro: discord.Member = No
 
 @bot.tree.command(name="rank", description="Exibe o top 5 usuários com mais XP do servidor")
 async def slash_rank(interaction: discord.Interaction):
-    conn = sqlite3.connect(DB_FILENAME)
-    c = conn.cursor()
-    c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(interaction.guild.id),))
-    rows = c.fetchall()
-    conn.close()
-    if not rows:
-        await interaction.response.send_message("Nenhum dado de XP registrado ainda!", ephemeral=True)
-        return
-    embed = discord.Embed(title="Ranking - Top 5", description="Os membros com mais XP do servidor", color=discord.Color.gold())
-    posicoes = {1: "1.", 2: "2.", 3: "3.", 4: "4.", 5: "5."}
-    count = 0
-    for row in rows:
-        user_id = int(row[0])
-        total_mensagens = row[1]
-        xp = get_xp(total_mensagens)
-        nivel = get_level(xp)
-        member = interaction.guild.get_member(user_id)
-        if member is None:
-            continue
-        count += 1
-        if count > 5:
-            break
-        embed.add_field(
-            name=f"{posicoes[count]} {member.display_name}",
-            value=f"XP: **{xp}** | Nível: **{nivel}** | Mensagens: {total_mensagens}",
-            inline=False
-        )
-    if count == 0:
-        await interaction.response.send_message("Nenhum membro encontrado no ranking.", ephemeral=True)
-        return
-    await interaction.response.send_message(embed=embed)
+    try:
+        conn = sqlite3.connect(DB_FILENAME)
+        c = conn.cursor()
+        c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(interaction.guild.id),))
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            await interaction.response.send_message("Nenhum dado de XP registrado ainda!", ephemeral=True)
+            return
+        embed = discord.Embed(title="Ranking - Top 5", description="Os membros com mais XP do servidor", color=discord.Color.gold())
+        posicoes = {1: "1.", 2: "2.", 3: "3.", 4: "4.", 5: "5."}
+        count = 0
+        for row in rows:
+            user_id = int(row[0])
+            total_mensagens = row[1]
+            xp = get_xp(total_mensagens)
+            nivel = get_level(xp)
+            member = interaction.guild.get_member(user_id)
+            if member is None:
+                continue
+            count += 1
+            if count > 5:
+                break
+            embed.add_field(
+                name=f"{posicoes[count]} {member.display_name}",
+                value=f"XP: **{xp}** | Nível: **{nivel}** | Mensagens: {total_mensagens}",
+                inline=False
+            )
+        if count == 0:
+            await interaction.response.send_message("Nenhum membro encontrado no ranking.", ephemeral=True)
+            return
+        await interaction.response.send_message(embed=embed)
+    except Exception as e:
+        await interaction.response.send_message(f"Erro ao gerar ranking: {e}", ephemeral=True)
 
-# ================ PREFIX COMMANDS (comandos por texto) ================
-# NÃO precise mais usar @canal_restrito_texto() – o @bot.check global já cuida de tudo.
-
-# --- MODERAÇÃO ---
+# ================ PREFIX COMMANDS ================
 
 @bot.command(name='ban')
 @commands.has_permissions(ban_members=True)
@@ -523,8 +521,6 @@ async def prefix_unmute(ctx, membro: discord.Member):
     except Exception as e:
         await ctx.send(f"Erro: {e}")
 
-# --- GERENCIAMENTO DE CANAL ---
-
 @bot.command(name='lock')
 @commands.has_permissions(manage_channels=True)
 async def prefix_lock(ctx):
@@ -549,8 +545,6 @@ async def prefix_unlock(ctx):
     except Exception as e:
         await ctx.send(f"Erro: {e}")
 
-# --- LIMPEZA ---
-
 @bot.command(name='delete')
 @commands.has_permissions(manage_messages=True)
 async def prefix_delete(ctx, quantidade: int):
@@ -561,8 +555,6 @@ async def prefix_delete(ctx, quantidade: int):
         await ctx.send(f"{len(deleted)} mensagens apagadas.", delete_after=5)
     except Exception as e:
         await ctx.send(f"Erro: {e}")
-
-# --- XP / PERFIL / RANK ---
 
 @bot.command(name='xp')
 async def prefix_xp(ctx, membro: discord.Member = None):
@@ -584,35 +576,38 @@ async def prefix_xp(ctx, membro: discord.Member = None):
 
 @bot.command(name='rank')
 async def prefix_rank(ctx):
-    conn = sqlite3.connect(DB_FILENAME)
-    c = conn.cursor()
-    c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(ctx.guild.id),))
-    rows = c.fetchall()
-    conn.close()
-    if not rows:
-        return await ctx.send("Nenhum dado de XP registrado ainda!")
+    try:
+        conn = sqlite3.connect(DB_FILENAME)
+        c = conn.cursor()
+        c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(ctx.guild.id),))
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            return await ctx.send("Nenhum dado de XP registrado ainda!")
 
-    embed = discord.Embed(title="Ranking - Top 5", color=discord.Color.gold())
-    count = 0
-    for row in rows:
-        user_id = int(row[0])
-        total = row[1]
-        xp = get_xp(total)
-        nivel = get_level(xp)
-        member = ctx.guild.get_member(user_id)
-        if member is None:
-            continue
-        count += 1
-        if count > 5:
-            break
-        embed.add_field(
-            name=f"{count}. {member.display_name}",
-            value=f"XP: **{xp}** | Nível: **{nivel}** | Mensagens: {total}",
-            inline=False
-        )
-    if count == 0:
-        return await ctx.send("Nenhum membro encontrado no ranking.")
-    await ctx.send(embed=embed)
+        embed = discord.Embed(title="Ranking - Top 5", color=discord.Color.gold())
+        count = 0
+        for row in rows:
+            user_id = int(row[0])
+            total = row[1]
+            xp = get_xp(total)
+            nivel = get_level(xp)
+            member = ctx.guild.get_member(user_id)
+            if member is None:
+                continue
+            count += 1
+            if count > 5:
+                break
+            embed.add_field(
+                name=f"{count}. {member.display_name}",
+                value=f"XP: **{xp}** | Nível: **{nivel}** | Mensagens: {total}",
+                inline=False
+            )
+        if count == 0:
+            return await ctx.send("Nenhum membro encontrado no ranking.")
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"Erro ao gerar ranking: {e}")
 
 # ================ Inicialização ================
 if __name__ == '__main__':
