@@ -29,7 +29,7 @@ intents.members = True
 bot = commands.Bot(command_prefix='/', intents=intents, help_command=None)
 
 # ================ Restrição de canal ================
-CANAL_PERMITIDO = 1500291470530314331  # ID do canal onde os comandos são liberados para todos
+CANAL_PERMITIDO = 1500291470530314331
 
 @bot.tree.interaction_check
 async def global_channel_restriction(interaction: discord.Interaction) -> bool:
@@ -60,9 +60,9 @@ async def global_text_channel_restriction(ctx):
         delete_after=10
     )
     return False
-    
+
 # ================ SQLite local ================
-DB_FILENAME = os.path.join(os.getcwd(), 'xp_data.db')  # caminho absoluto
+DB_FILENAME = os.path.join(os.getcwd(), 'xp_data.db')
 db_changed = False
 db_lock = asyncio.Lock()
 
@@ -91,7 +91,6 @@ def increment_count(guild_id, user_id):
         conn.commit()
         conn.close()
         db_changed = True
-        print(f"XP incrementado para {user_id} no servidor {guild_id}")
     except Exception as e:
         print(f"ERRO ao incrementar contagem: {e}")
 
@@ -139,13 +138,11 @@ async def upload_to_drive():
     async with db_lock:
         try:
             drive = get_drive()
-            # Remove arquivos antigos
             file_list = drive.ListFile({
                 'q': f"'{FOLDER_ID}' in parents and title='{DRIVE_FILE_NAME}' and trashed=false"
             }).GetList()
             for f in file_list:
                 f.Delete()
-            # Upload do novo
             file_drive = drive.CreateFile({
                 'title': DRIVE_FILE_NAME,
                 'parents': [{'id': FOLDER_ID}]
@@ -183,7 +180,6 @@ async def sync_loop():
     await bot.wait_until_ready()
     await download_from_drive()
     init_db()
-    # Força o primeiro upload para garantir que o banco esteja no Drive
     global db_changed
     db_changed = True
     while not bot.is_closed():
@@ -210,7 +206,6 @@ async def on_message(message):
     increment_count(message.guild.id, message.author.id)
     await bot.process_commands(message)
 
-# ================ Novo evento: boas-vindas e cargo automático ================
 @bot.event
 async def on_member_join(member):
     cargo_verificado = member.guild.get_role(1500257493270401206)
@@ -385,6 +380,7 @@ async def slash_delete(interaction: discord.Interaction, quantidade: int):
 @bot.tree.command(name="xp", description="Mostra o perfil e progresso de XP de um usuário")
 @app_commands.describe(membro="Usuário (deixe em branco para ver o seu)")
 async def slash_xp(interaction: discord.Interaction, membro: discord.Member = None):
+    await interaction.response.defer()  # Evita timeout
     if membro is None:
         membro = interaction.user
     total_mensagens = get_count(interaction.guild.id, membro.id)
@@ -404,10 +400,11 @@ async def slash_xp(interaction: discord.Interaction, membro: discord.Member = No
         value=f"{barra} ({xp_atual}/{xp_necessario} XP)",
         inline=False
     )
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="rank", description="Exibe o top 5 usuários com mais XP do servidor")
 async def slash_rank(interaction: discord.Interaction):
+    await interaction.response.defer()  # Evita timeout
     try:
         conn = sqlite3.connect(DB_FILENAME)
         c = conn.cursor()
@@ -415,7 +412,7 @@ async def slash_rank(interaction: discord.Interaction):
         rows = c.fetchall()
         conn.close()
         if not rows:
-            await interaction.response.send_message("Nenhum dado de XP registrado ainda!", ephemeral=True)
+            await interaction.followup.send("Nenhum dado de XP registrado ainda!", ephemeral=True)
             return
         embed = discord.Embed(title="Ranking - Top 5", description="Os membros com mais XP do servidor", color=discord.Color.gold())
         posicoes = {1: "1.", 2: "2.", 3: "3.", 4: "4.", 5: "5."}
@@ -437,11 +434,11 @@ async def slash_rank(interaction: discord.Interaction):
                 inline=False
             )
         if count == 0:
-            await interaction.response.send_message("Nenhum membro encontrado no ranking.", ephemeral=True)
+            await interaction.followup.send("Nenhum membro encontrado no ranking.", ephemeral=True)
             return
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
     except Exception as e:
-        await interaction.response.send_message(f"Erro ao gerar ranking: {e}", ephemeral=True)
+        await interaction.followup.send(f"Erro ao gerar ranking: {e}", ephemeral=True)
 
 # ================ PREFIX COMMANDS ================
 
