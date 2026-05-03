@@ -3,6 +3,7 @@ import sqlite3
 import asyncio
 import discord
 import datetime
+from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 from threading import Thread
@@ -24,7 +25,7 @@ def keep_alive():
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+bot = commands.Bot(command_prefix='/', intents=intents, help_command=None)
 
 # ================ SQLite local ================
 DB_FILENAME = 'xp_data.db'
@@ -138,55 +139,18 @@ async def sync_loop():
 @bot.event
 async def on_ready():
     print(f'{bot.user} online')
-    await bot.change_presence(activity=discord.Game("!help ou / | Comandos"))
+    await bot.change_presence(activity=discord.Game("Use /comando"))
+    try:
+        synced = await bot.tree.sync()
+        print(f"Slash commands sincronizados: {len(synced)} comandos")
+    except Exception as e:
+        print(f"Erro ao sincronizar comandos: {e}")
     bot.loop.create_task(sync_loop())
 
 @bot.event
 async def on_message(message):
     if message.author.bot or not message.guild:
         return
-    
-    # Se a mensagem for apenas "/" mostra os comandos
-    if message.content.strip() == "/":
-        embed = discord.Embed(
-            title="Lista de Comandos",
-            description="Prefixo: `!`\nUse `!comando` para executar",
-            color=discord.Color.blue()
-        )
-        
-        embed.add_field(
-            name="Moderacao",
-            value=(
-                "`!ban @usuario [motivo]` - Bane um usuario\n"
-                "`!unban Nome#1234` - Desbane um usuario\n"
-                "`!kick @usuario [motivo]` - Expulsa um usuario\n"
-                "`!mute @usuario [minutos]` - Muta um usuario\n"
-                "`!unmute @usuario` - Desmuta um usuario\n"
-                "`!lock` - Trava o canal\n"
-                "`!unlock` - Destrava o canal\n"
-                "`!delete <quantidade>` - Apaga mensagens"
-            ),
-            inline=False
-        )
-        
-        embed.add_field(
-            name="XP e Ranking",
-            value=(
-                "`!xp` - Mostra seu perfil\n"
-                "`!xp @usuario` - Mostra perfil de alguem\n"
-                "`!perfil` - Igual ao !xp\n"
-                "`!rank` - Top 5 do servidor\n"
-                "`!help` - Mostra esta lista"
-            ),
-            inline=False
-        )
-        
-        embed.set_footer(text="SX Team Bot - Sistema de Moderacao e XP")
-        
-        await message.channel.send(embed=embed)
-        return
-    
-    # Contagem de XP normal
     increment_count(message.guild.id, message.author.id)
     await bot.process_commands(message)
 
@@ -197,261 +161,222 @@ def get_xp(total):
 def get_level(xp):
     return xp // 10
 
-# ================ Comando HELP ================
-@bot.command()
-async def help(ctx):
-    """Mostra todos os comandos do bot."""
-    embed = discord.Embed(
-        title="Lista de Comandos",
-        description="Prefixo: `!`\nUse `!comando` para executar",
-        color=discord.Color.blue()
-    )
-    
-    embed.add_field(
-        name="Moderacao",
-        value=(
-            "`!ban @usuario [motivo]` - Bane um usuario\n"
-            "`!unban Nome#1234` - Desbane um usuario\n"
-            "`!kick @usuario [motivo]` - Expulsa um usuario\n"
-            "`!mute @usuario [minutos]` - Muta um usuario\n"
-            "`!unmute @usuario` - Desmuta um usuario\n"
-            "`!lock` - Trava o canal\n"
-            "`!unlock` - Destrava o canal\n"
-            "`!delete <quantidade>` - Apaga mensagens"
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="XP e Ranking",
-        value=(
-            "`!xp` - Mostra seu perfil\n"
-            "`!xp @usuario` - Mostra perfil de alguem\n"
-            "`!perfil` - Igual ao !xp\n"
-            "`!rank` - Top 5 do servidor\n"
-            "`!help` - Mostra esta lista"
-        ),
-        inline=False
-    )
-    
-    embed.set_footer(text="SX Team Bot - Sistema de Moderacao e XP")
-    
-    await ctx.send(embed=embed)
+# ================ SLASH COMMANDS ================
 
-# ================ Comandos de Moderacao ================
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason="Nao especificado"):
-    if member == ctx.author:
-        await ctx.send("Voce nao pode se banir.")
+# --- MODERAÇÃO ---
+
+@bot.tree.command(name="ban", description="Bane um usuário do servidor")
+@app_commands.describe(membro="Usuário a ser banido", motivo="Motivo do banimento")
+@app_commands.default_permissions(ban_members=True)
+async def slash_ban(interaction: discord.Interaction, membro: discord.Member, motivo: str = "Não especificado"):
+    if membro == interaction.user:
+        await interaction.response.send_message("Você não pode se banir.", ephemeral=True)
         return
-    if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
-        await ctx.send("Voce nao pode banir alguem com cargo superior ou igual ao seu.")
+    if membro.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        await interaction.response.send_message("Você não pode banir alguém com cargo superior ou igual ao seu.", ephemeral=True)
         return
     try:
-        await member.ban(reason=reason)
-        await ctx.send(f"{member.mention} foi banido. Motivo: {reason}")
+        await membro.ban(reason=motivo)
+        await interaction.response.send_message(f"{membro.mention} foi banido. Motivo: {motivo}")
     except Exception as e:
-        await ctx.send(f"Erro ao banir: {e}")
+        await interaction.response.send_message(f"Erro ao banir: {e}", ephemeral=True)
 
-@ban.error
-async def ban_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("Voce precisa da permissao Banir membros.")
-    elif isinstance(error, commands.MemberNotFound):
-        await ctx.send("Membro nao encontrado.")
-
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def unban(ctx, *, user):
+@bot.tree.command(name="unban", description="Desbane um usuário pelo nome ou nome#tag")
+@app_commands.describe(usuario="Nome do usuário banido (ex: Fulano ou Fulano#1234)")
+@app_commands.default_permissions(ban_members=True)
+async def slash_unban(interaction: discord.Interaction, usuario: str):
     try:
-        banned = [entry async for entry in ctx.guild.bans()]
-        for ban_entry in banned:
-            if str(ban_entry.user) == user:
-                await ctx.guild.unban(ban_entry.user)
-                await ctx.send(f"{ban_entry.user} foi desbanido.")
-                return
-        await ctx.send("Usuario nao encontrado na lista de bans.")
-    except Exception as e:
-        await ctx.send(f"Erro ao desbanir: {e}")
-
-@bot.command()
-@commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason="Nao especificado"):
-    if member == ctx.author:
-        await ctx.send("Voce nao pode se expulsar.")
-        return
-    if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
-        await ctx.send("Voce nao pode expulsar alguem com cargo superior ou igual ao seu.")
-        return
-    try:
-        await member.kick(reason=reason)
-        await ctx.send(f"{member.mention} foi expulso. Motivo: {reason}")
-    except Exception as e:
-        await ctx.send(f"Erro ao expulsar: {e}")
-
-@kick.error
-async def kick_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("Voce precisa da permissao Expulsar membros.")
-
-@bot.command()
-@commands.has_permissions(moderate_members=True)
-async def mute(ctx, member: discord.Member, minutes: int = 60, *, reason="Nao especificado"):
-    if member == ctx.author:
-        await ctx.send("Voce nao pode se mutar.")
-        return
-    if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
-        await ctx.send("Voce nao pode mutar alguem com cargo superior ou igual ao seu.")
-        return
-    try:
-        duration = minutes * 60
-        await member.timeout(discord.utils.utcnow() + datetime.timedelta(seconds=duration), reason=reason)
-        await ctx.send(f"{member.mention} foi mutado por {minutes} minuto(s). Motivo: {reason}")
-    except Exception as e:
-        await ctx.send(f"Erro ao mutar: {e}")
-
-@bot.command()
-@commands.has_permissions(moderate_members=True)
-async def unmute(ctx, member: discord.Member):
-    try:
-        if member.timed_out_until is None:
-            await ctx.send(f"{member.mention} nao esta mutado.")
+        bans = [entry async for entry in interaction.guild.bans()]
+        if not bans:
+            await interaction.response.send_message("Não há usuários banidos neste servidor.", ephemeral=True)
             return
-        await member.timeout(None)
-        await ctx.send(f"{member.mention} foi desmutado.")
-    except Exception as e:
-        await ctx.send(f"Erro ao desmutar: {e}")
 
-# ================ Comandos de Canal ================
-@bot.command()
-@commands.has_permissions(manage_channels=True)
-async def lock(ctx):
+        # Estratégia 1: correspondência exata (nome#discriminador)
+        encontrados = []
+        for entry in bans:
+            if str(entry.user) == usuario:
+                encontrados.append(entry.user)
+
+        # Estratégia 2: se não achou exato, busca por parte do nome (case-insensitive)
+        if not encontrados:
+            usuario_lower = usuario.lower()
+            for entry in bans:
+                if usuario_lower in entry.user.name.lower() or usuario_lower in str(entry.user).lower():
+                    encontrados.append(entry.user)
+
+        if not encontrados:
+            await interaction.response.send_message("Nenhum usuário banido corresponde a esse nome.", ephemeral=True)
+            return
+
+        if len(encontrados) > 1:
+            # Lista os possíveis para escolha (apenas informa, não desbana)
+            nomes = "\n".join(f"• {str(u)}" for u in encontrados[:10])  # máximo 10
+            await interaction.response.send_message(
+                f"Vários usuários correspondem. Seja mais específico:\n{nomes}",
+                ephemeral=True
+            )
+            return
+
+        # Apenas um encontrado – desbane
+        user_to_unban = encontrados[0]
+        await interaction.guild.unban(user_to_unban)
+        await interaction.response.send_message(f"{user_to_unban} foi desbanido com sucesso!")
+    except Exception as e:
+        await interaction.response.send_message(f"Erro ao desbanir: {e}", ephemeral=True)
+
+@bot.tree.command(name="kick", description="Expulsa um usuário do servidor")
+@app_commands.describe(membro="Usuário a ser expulso", motivo="Motivo da expulsão")
+@app_commands.default_permissions(kick_members=True)
+async def slash_kick(interaction: discord.Interaction, membro: discord.Member, motivo: str = "Não especificado"):
+    if membro == interaction.user:
+        await interaction.response.send_message("Você não pode se expulsar.", ephemeral=True)
+        return
+    if membro.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        await interaction.response.send_message("Você não pode expulsar alguém com cargo superior ou igual ao seu.", ephemeral=True)
+        return
     try:
-        guild = ctx.guild
-        channel = ctx.channel
+        await membro.kick(reason=motivo)
+        await interaction.response.send_message(f"{membro.mention} foi expulso. Motivo: {motivo}")
+    except Exception as e:
+        await interaction.response.send_message(f"Erro ao expulsar: {e}", ephemeral=True)
+
+@bot.tree.command(name="mute", description="Muta um usuário temporariamente")
+@app_commands.describe(membro="Usuário a ser mutado", minutos="Duração em minutos (padrão 60)", motivo="Motivo do mute")
+@app_commands.default_permissions(moderate_members=True)
+async def slash_mute(interaction: discord.Interaction, membro: discord.Member, minutos: int = 60, motivo: str = "Não especificado"):
+    if membro == interaction.user:
+        await interaction.response.send_message("Você não pode se mutar.", ephemeral=True)
+        return
+    if membro.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        await interaction.response.send_message("Você não pode mutar alguém com cargo superior ou igual ao seu.", ephemeral=True)
+        return
+    try:
+        duration = minutos * 60
+        await membro.timeout(discord.utils.utcnow() + datetime.timedelta(seconds=duration), reason=motivo)
+        await interaction.response.send_message(f"{membro.mention} foi mutado por {minutos} minuto(s). Motivo: {motivo}")
+    except Exception as e:
+        await interaction.response.send_message(f"Erro ao mutar: {e}", ephemeral=True)
+
+@bot.tree.command(name="unmute", description="Desmuta um usuário")
+@app_commands.describe(membro="Usuário a ser desmutado")
+@app_commands.default_permissions(moderate_members=True)
+async def slash_unmute(interaction: discord.Interaction, membro: discord.Member):
+    try:
+        if membro.timed_out_until is None:
+            await interaction.response.send_message(f"{membro.mention} não está mutado.", ephemeral=True)
+            return
+        await membro.timeout(None)
+        await interaction.response.send_message(f"{membro.mention} foi desmutado.")
+    except Exception as e:
+        await interaction.response.send_message(f"Erro ao desmutar: {e}", ephemeral=True)
+
+# --- GERENCIAMENTO DE CANAL ---
+
+@bot.tree.command(name="lock", description="Trava o canal atual")
+@app_commands.default_permissions(manage_channels=True)
+async def slash_lock(interaction: discord.Interaction):
+    channel = interaction.channel
+    guild = interaction.guild
+    try:
         await channel.set_permissions(guild.default_role, send_messages=False)
         await channel.set_permissions(guild.owner, send_messages=True)
-        await ctx.send("Canal travado. Apenas o dono do servidor pode enviar mensagens agora.")
+        await interaction.response.send_message("Canal travado. Apenas o dono do servidor pode enviar mensagens agora.")
     except Exception as e:
-        await ctx.send(f"Erro ao travar canal: {e}")
+        await interaction.response.send_message(f"Erro ao travar canal: {e}", ephemeral=True)
 
-@bot.command()
-@commands.has_permissions(manage_channels=True)
-async def unlock(ctx):
+@bot.tree.command(name="unlock", description="Destrava o canal atual")
+@app_commands.default_permissions(manage_channels=True)
+async def slash_unlock(interaction: discord.Interaction):
+    channel = interaction.channel
+    guild = interaction.guild
     try:
-        guild = ctx.guild
-        channel = ctx.channel
         await channel.set_permissions(guild.default_role, send_messages=None)
         await channel.set_permissions(guild.owner, send_messages=None)
-        await ctx.send("Canal destravado. Todos podem voltar a enviar mensagens.")
+        await interaction.response.send_message("Canal destravado. Todos podem voltar a enviar mensagens.")
     except Exception as e:
-        await ctx.send(f"Erro ao destravar canal: {e}")
+        await interaction.response.send_message(f"Erro ao destravar canal: {e}", ephemeral=True)
 
-# ================ Comando Delete ================
-@bot.command(name='delete')
-@commands.has_permissions(manage_messages=True)
-async def delete_messages(ctx, amount: int):
-    if amount < 1:
-        return await ctx.send("Numero invalido.")
-    if amount > 100:
-        amount = 100
+# --- LIMPEZA ---
+
+@bot.tree.command(name="delete", description="Apaga uma quantidade de mensagens do canal")
+@app_commands.describe(quantidade="Número de mensagens a apagar (1-100)")
+@app_commands.default_permissions(manage_messages=True)
+async def slash_delete(interaction: discord.Interaction, quantidade: int):
+    if quantidade < 1 or quantidade > 100:
+        await interaction.response.send_message("Número inválido (mín 1, máx 100).", ephemeral=True)
+        return
     try:
-        deleted = await ctx.channel.purge(limit=amount)
-        msg = await ctx.send(f"{len(deleted)} mensagens apagadas.")
-        await asyncio.sleep(3)
-        await msg.delete()
+        await interaction.response.defer(ephemeral=True)
+        deleted = await interaction.channel.purge(limit=quantidade)
+        await interaction.followup.send(f"{len(deleted)} mensagens apagadas.", ephemeral=True)
     except Exception as e:
-        await ctx.send(f"Erro ao apagar mensagens: {e}")
+        await interaction.followup.send(f"Erro ao apagar mensagens: {e}", ephemeral=True)
 
-# ================ Comandos de XP / Perfil / Rank ================
-@bot.command(aliases=['perfil'])
-async def xp(ctx, member: discord.Member = None):
-    """Mostra o perfil com nome, avatar, XP e nivel."""
-    if member is None:
-        member = ctx.author
-    
-    total_mensagens = get_count(ctx.guild.id, member.id)
+# --- XP / PERFIL / RANK ---
+
+@bot.tree.command(name="xp", description="Mostra o perfil e progresso de XP de um usuário")
+@app_commands.describe(membro="Usuário (deixe em branco para ver o seu)")
+async def slash_xp(interaction: discord.Interaction, membro: discord.Member = None):
+    if membro is None:
+        membro = interaction.user
+    total_mensagens = get_count(interaction.guild.id, membro.id)
     xp = get_xp(total_mensagens)
     nivel = get_level(xp)
-    
-    embed = discord.Embed(
-        title=f"Perfil de {member.display_name}",
-        color=discord.Color.blue()
-    )
-    embed.set_thumbnail(url=member.display_avatar.url)
+    embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.blue())
+    embed.set_thumbnail(url=membro.display_avatar.url)
     embed.add_field(name="Mensagens", value=total_mensagens, inline=True)
     embed.add_field(name="XP", value=f"{xp}", inline=True)
-    embed.add_field(name="Nivel", value=f"{nivel}", inline=True)
-    
-    # Barra de progresso para o proximo nivel
+    embed.add_field(name="Nível", value=f"{nivel}", inline=True)
     xp_atual = xp % 10
     xp_necessario = 10
     progresso = int((xp_atual / xp_necessario) * 10)
     barra = "[" + "#" * progresso + "-" * (10 - progresso) + "]"
     embed.add_field(
-        name=f"Progresso para nivel {nivel + 1}",
+        name=f"Progresso para nível {nivel + 1}",
         value=f"{barra} ({xp_atual}/{xp_necessario} XP)",
         inline=False
     )
-    
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
-@bot.command()
-async def rank(ctx):
-    """Mostra o top 5 usuarios com mais XP no servidor."""
-    
+@bot.tree.command(name="rank", description="Exibe o top 5 usuários com mais XP do servidor")
+async def slash_rank(interaction: discord.Interaction):
     conn = sqlite3.connect(DB_FILENAME)
     c = conn.cursor()
-    c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(ctx.guild.id),))
+    c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(interaction.guild.id),))
     rows = c.fetchall()
     conn.close()
-    
     if not rows:
-        await ctx.send("Nenhum dado de XP registrado ainda!")
+        await interaction.response.send_message("Nenhum dado de XP registrado ainda!", ephemeral=True)
         return
-    
-    embed = discord.Embed(
-        title="Ranking - Top 5",
-        description="Os membros com mais XP do servidor",
-        color=discord.Color.gold()
-    )
-    
+    embed = discord.Embed(title="Ranking - Top 5", description="Os membros com mais XP do servidor", color=discord.Color.gold())
     posicoes = {1: "1.", 2: "2.", 3: "3.", 4: "4.", 5: "5."}
-    
     count = 0
     for row in rows:
         user_id = int(row[0])
         total_mensagens = row[1]
         xp = get_xp(total_mensagens)
         nivel = get_level(xp)
-        
-        member = ctx.guild.get_member(user_id)
-        
-        if member:
-            count += 1
-            if count > 5:
-                break
-            
-            nome = member.display_name
-            
-            embed.add_field(
-                name=f"{posicoes[count]} {nome}",
-                value=f"XP: **{xp}** | Nivel: **{nivel}** | Mensagens: {total_mensagens}",
-                inline=False
-            )
-    
+        member = interaction.guild.get_member(user_id)
+        if member is None:
+            continue
+        count += 1
+        if count > 5:
+            break
+        embed.add_field(
+            name=f"{posicoes[count]} {member.display_name}",
+            value=f"XP: **{xp}** | Nível: **{nivel}** | Mensagens: {total_mensagens}",
+            inline=False
+        )
     if count == 0:
-        await ctx.send("Nenhum membro encontrado no ranking.")
+        await interaction.response.send_message("Nenhum membro encontrado no ranking.", ephemeral=True)
         return
-    
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
-# ================ Inicializacao ================
+# ================ Inicialização ================
 if __name__ == '__main__':
     keep_alive()
     TOKEN = os.environ.get('DISCORD_TOKEN')
     if not TOKEN:
-        print("Token nao definido!")
+        print("Token não definido!")
     else:
         bot.run(TOKEN)
