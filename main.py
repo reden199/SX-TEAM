@@ -8,9 +8,10 @@ from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 from threading import Thread
-from pydrive2.auth import GoogleAuth
-from pydrive2.drive import GoogleDrive
-from google.oauth2 import service_account  # NOVA IMPORTAÇÃO (substitui oauth2client)
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+import io
 
 # ================ Keep-alive no Render ================
 app = Flask('')
@@ -107,11 +108,11 @@ def get_count(guild_id, user_id):
         print(f"ERRO ao obter contagem: {e}")
         return 0
 
-# ================ Google Drive (AGORA COM google-auth) ================
+# ================ Google Drive (API oficial) ================
 FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID')
 DRIVE_FILE_NAME = 'xp_data.db'
 
-def get_drive():
+def get_drive_service():
     creds_dict = {
         "type": "service_account",
         "project_id": os.environ.get("GDRIVE_PROJECT_ID"),
@@ -124,11 +125,10 @@ def get_drive():
         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
         "client_x509_cert_url": os.environ.get("GDRIVE_CLIENT_CERT_URL", "")
     }
-    scopes = ['https://www.googleapis.com/auth/drive.file']
-    credentials = service_account.Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    gauth = GoogleAuth()
-    gauth.credentials = credentials
-    return GoogleDrive(gauth)
+    credentials = service_account.Credentials.from_service_account_info(
+        creds_dict, scopes=['https://www.googleapis.com/auth/drive.file']
+    )
+    return build('drive', 'v3', credentials=credentials)
 
 async def upload_to_drive():
     if not FOLDER_ID:
@@ -137,18 +137,23 @@ async def upload_to_drive():
     global db_changed
     async with db_lock:
         try:
-            drive = get_drive()
-            file_list = drive.ListFile({
-                'q': f"'{FOLDER_ID}' in parents and title='{DRIVE_FILE_NAME}' and trashed=false"
-            }).GetList()
-            for f in file_list:
-                f.Delete()
-            file_drive = drive.CreateFile({
-                'title': DRIVE_FILE_NAME,
-                'parents': [{'id': FOLDER_ID}]
-            })
-            file_drive.SetContentFile(DB_FILENAME)
-            file_drive.Upload()
+            service = get_drive_service()
+            # Remove versão antiga
+            response = service.files().list(
+                q=f"'{FOLDER_ID}' in parents and name='{DRIVE_FILE_NAME}' and trashed=false",
+                spaces='drive',
+                fields='files(id)'
+            ).execute()
+            for f in response.get('files', []):
+                service.files().delete(fileId=f['id']).execute()
+
+            # Upload do novo arquivo
+            media = MediaFileUpload(DB_FILENAME, mimetype='application/octet-stream')
+            file_metadata = {
+                'name': DRIVE_FILE_NAME,
+                'parents': [FOLDER_ID]
+            }
+            service.files().create(body=file_metadata, media_body=media, fields='id').execute()
             db_changed = False
             print("Banco sincronizado com Google Drive.")
         except Exception as e:
@@ -160,16 +165,24 @@ async def download_from_drive():
         print("FOLDER_ID não definido, download ignorado.")
         return
     try:
-        drive = get_drive()
-        file_list = drive.ListFile({
-            'q': f"'{FOLDER_ID}' in parents and title='{DRIVE_FILE_NAME}' and trashed=false",
-            'orderBy': 'modifiedDate desc',
-            'maxResults': 1
-        }).GetList()
-        if file_list:
-            file_drive = file_list[0]
-            file_drive.GetContentFile(DB_FILENAME)
-            print(f"Banco baixado do Drive ({file_drive['fileSize']} bytes).")
+        service = get_drive_service()
+        response = service.files().list(
+            q=f"'{FOLDER_ID}' in parents and name='{DRIVE_FILE_NAME}' and trashed=false",
+            spaces='drive',
+            fields='files(id, size)',
+            orderBy='modifiedTime desc',
+            pageSize=1
+        ).execute()
+        files = response.get('files', [])
+        if files:
+            file_id = files[0]['id']
+            request = service.files().get_media(fileId=file_id)
+            fh = io.FileIO(DB_FILENAME, 'wb')
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+            print(f"Banco baixado do Drive ({files[0].get('size', '?')} bytes).")
         else:
             print("Nenhum banco encontrado no Drive, iniciando zerado.")
     except Exception as e:
@@ -237,7 +250,6 @@ def get_level(xp):
     return xp // 10
 
 # ================ SLASH COMMANDS ================
-
 @bot.tree.command(name="ban", description="Bane um usuário do servidor")
 @app_commands.describe(membro="Usuário a ser banido", motivo="Motivo do banimento")
 @app_commands.default_permissions(ban_members=True)
@@ -263,22 +275,18 @@ async def slash_unban(interaction: discord.Interaction, usuario: str):
         if not bans:
             await interaction.response.send_message("Não há usuários banidos neste servidor.", ephemeral=True)
             return
-
         encontrados = []
         for entry in bans:
             if str(entry.user) == usuario:
                 encontrados.append(entry.user)
-
         if not encontrados:
             usuario_lower = usuario.lower()
             for entry in bans:
                 if usuario_lower in entry.user.name.lower() or usuario_lower in str(entry.user).lower():
                     encontrados.append(entry.user)
-
         if not encontrados:
             await interaction.response.send_message("Nenhum usuário banido corresponde a esse nome.", ephemeral=True)
             return
-
         if len(encontrados) > 1:
             nomes = "\n".join(f"• {str(u)}" for u in encontrados[:10])
             await interaction.response.send_message(
@@ -286,7 +294,6 @@ async def slash_unban(interaction: discord.Interaction, usuario: str):
                 ephemeral=True
             )
             return
-
         user_to_unban = encontrados[0]
         await interaction.guild.unban(user_to_unban)
         await interaction.response.send_message(f"{user_to_unban} foi desbanido com sucesso!")
@@ -359,7 +366,7 @@ async def slash_unlock(interaction: discord.Interaction):
     try:
         await channel.set_permissions(guild.default_role, send_messages=None)
         await channel.set_permissions(guild.owner, send_messages=None)
-        await interaction.response.send_message("Canal destravado. Todos podem voltar a enviar mensagens.")
+        await interaction.response.send_message("Canal destravado.")
     except Exception as e:
         await interaction.response.send_message(f"Erro ao destravar canal: {e}", ephemeral=True)
 
@@ -380,7 +387,10 @@ async def slash_delete(interaction: discord.Interaction, quantidade: int):
 @bot.tree.command(name="xp", description="Mostra o perfil e progresso de XP de um usuário")
 @app_commands.describe(membro="Usuário (deixe em branco para ver o seu)")
 async def slash_xp(interaction: discord.Interaction, membro: discord.Member = None):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except discord.errors.NotFound:
+        return  # interação inválida, ignora
     if membro is None:
         membro = interaction.user
     total_mensagens = get_count(interaction.guild.id, membro.id)
@@ -404,7 +414,10 @@ async def slash_xp(interaction: discord.Interaction, membro: discord.Member = No
 
 @bot.tree.command(name="rank", description="Exibe o top 5 usuários com mais XP do servidor")
 async def slash_rank(interaction: discord.Interaction):
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()
+    except discord.errors.NotFound:
+        return
     try:
         conn = sqlite3.connect(DB_FILENAME)
         c = conn.cursor()
@@ -440,7 +453,8 @@ async def slash_rank(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"Erro ao gerar ranking: {e}", ephemeral=True)
 
-# ================ PREFIX COMMANDS ================
+# ================ PREFIX COMMANDS (mantidos iguais) ================
+# ... (todos os comandos prefix mantidos como estavam, sem alterações)
 
 @bot.command(name='ban')
 @commands.has_permissions(ban_members=True)
@@ -462,18 +476,15 @@ async def prefix_unban(ctx, *, usuario: str):
         bans = [entry async for entry in ctx.guild.bans()]
         if not bans:
             return await ctx.send("Não há usuários banidos.")
-
         encontrados = [entry.user for entry in bans if str(entry.user) == usuario]
         if not encontrados:
             usuario_lower = usuario.lower()
             encontrados = [entry.user for entry in bans if usuario_lower in entry.user.name.lower() or usuario_lower in str(entry.user).lower()]
-
         if not encontrados:
             return await ctx.send("Nenhum usuário banido corresponde a esse nome.")
         if len(encontrados) > 1:
             nomes = "\n".join(f"• {u}" for u in encontrados[:10])
             return await ctx.send(f"Vários usuários correspondem. Seja mais específico:\n{nomes}")
-
         user_to_unban = encontrados[0]
         await ctx.guild.unban(user_to_unban)
         await ctx.send(f"{user_to_unban} foi desbanido.")
