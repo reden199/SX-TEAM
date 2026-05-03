@@ -2,6 +2,7 @@ import os
 import sqlite3
 import asyncio
 import discord
+import datetime
 from discord.ext import commands
 from flask import Flask
 from threading import Thread
@@ -147,23 +148,28 @@ async def on_message(message):
     increment_count(message.guild.id, message.author.id)
     await bot.process_commands(message)
 
-# ================ Cálculo de XP ================
+# ================ Cálculo de XP e Nível ================
 def get_xp(total):
     return (total // 5) * 3
+
+def get_level(xp):
+    return xp // 10
 
 # ================ Comandos de Moderação ================
 @bot.command()
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="Não especificado"):
-    """Bane um membro do servidor."""
     if member == ctx.author:
         await ctx.send("❌ Você não pode se banir.")
         return
     if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
         await ctx.send("❌ Você não pode banir alguém com cargo superior ou igual ao seu.")
         return
-    await member.ban(reason=reason)
-    await ctx.send(f"✅ {member.mention} foi banido. Motivo: {reason}")
+    try:
+        await member.ban(reason=reason)
+        await ctx.send(f"✅ {member.mention} foi banido. Motivo: {reason}")
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao banir: {e}")
 
 @ban.error
 async def ban_error(ctx, error):
@@ -175,27 +181,31 @@ async def ban_error(ctx, error):
 @bot.command()
 @commands.has_permissions(ban_members=True)
 async def unban(ctx, *, user):
-    """Desbane um usuário pelo nome#discriminador."""
-    banned = [entry async for entry in ctx.guild.bans()]
-    for ban_entry in banned:
-        if str(ban_entry.user) == user:
-            await ctx.guild.unban(ban_entry.user)
-            await ctx.send(f"✅ {ban_entry.user} foi desbanido.")
-            return
-    await ctx.send("❌ Usuário não encontrado na lista de bans.")
+    try:
+        banned = [entry async for entry in ctx.guild.bans()]
+        for ban_entry in banned:
+            if str(ban_entry.user) == user:
+                await ctx.guild.unban(ban_entry.user)
+                await ctx.send(f"✅ {ban_entry.user} foi desbanido.")
+                return
+        await ctx.send("❌ Usuário não encontrado na lista de bans.")
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao desbanir: {e}")
 
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason="Não especificado"):
-    """Expulsa um membro do servidor."""
     if member == ctx.author:
         await ctx.send("❌ Você não pode se expulsar.")
         return
     if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
         await ctx.send("❌ Você não pode expulsar alguém com cargo superior ou igual ao seu.")
         return
-    await member.kick(reason=reason)
-    await ctx.send(f"✅ {member.mention} foi expulso. Motivo: {reason}")
+    try:
+        await member.kick(reason=reason)
+        await ctx.send(f"✅ {member.mention} foi expulso. Motivo: {reason}")
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao expulsar: {e}")
 
 @kick.error
 async def kick_error(ctx, error):
@@ -205,74 +215,156 @@ async def kick_error(ctx, error):
 @bot.command()
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, minutes: int = 60, *, reason="Não especificado"):
-    """Aplica timeout (castigo) em um membro."""
     if member == ctx.author:
         await ctx.send("❌ Você não pode se mutar.")
         return
     if member.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
         await ctx.send("❌ Você não pode mutar alguém com cargo superior ou igual ao seu.")
         return
-    duration = minutes * 60
-    await member.timeout(discord.utils.utcnow() + discord.timedelta(seconds=duration), reason=reason)
-    await ctx.send(f"🔇 {member.mention} foi mutado por {minutes} minuto(s). Motivo: {reason}")
+    try:
+        duration = minutes * 60
+        await member.timeout(discord.utils.utcnow() + datetime.timedelta(seconds=duration), reason=reason)
+        await ctx.send(f"🔇 {member.mention} foi mutado por {minutes} minuto(s). Motivo: {reason}")
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao mutar: {e}")
 
 @bot.command()
 @commands.has_permissions(moderate_members=True)
 async def unmute(ctx, member: discord.Member):
-    """Remove o timeout do membro."""
-    if member.timed_out_until is None:
-        await ctx.send(f"❌ {member.mention} não está mutado.")
-        return
-    await member.timeout(None)
-    await ctx.send(f"🔊 {member.mention} foi desmutado.")
+    try:
+        if member.timed_out_until is None:
+            await ctx.send(f"❌ {member.mention} não está mutado.")
+            return
+        await member.timeout(None)
+        await ctx.send(f"🔊 {member.mention} foi desmutado.")
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao desmutar: {e}")
 
 # ================ Comandos de Canal ================
 @bot.command()
 @commands.has_permissions(manage_channels=True)
 async def lock(ctx):
-    """Trava o canal para apenas o dono falar."""
-    guild = ctx.guild
-    channel = ctx.channel
-    await channel.set_permissions(guild.default_role, send_messages=False)
-    await channel.set_permissions(guild.owner, send_messages=True)
-    await ctx.send("🔒 Canal travado. Apenas o dono do servidor pode enviar mensagens agora.")
+    try:
+        guild = ctx.guild
+        channel = ctx.channel
+        await channel.set_permissions(guild.default_role, send_messages=False)
+        await channel.set_permissions(guild.owner, send_messages=True)
+        await ctx.send("🔒 Canal travado. Apenas o dono do servidor pode enviar mensagens agora.")
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao travar canal: {e}")
 
 @bot.command()
 @commands.has_permissions(manage_channels=True)
 async def unlock(ctx):
-    """Destrava o canal."""
-    guild = ctx.guild
-    channel = ctx.channel
-    await channel.set_permissions(guild.default_role, send_messages=None)
-    await channel.set_permissions(guild.owner, send_messages=None)
-    await ctx.send("🔓 Canal destravado. Todos podem voltar a enviar mensagens.")
+    try:
+        guild = ctx.guild
+        channel = ctx.channel
+        await channel.set_permissions(guild.default_role, send_messages=None)
+        await channel.set_permissions(guild.owner, send_messages=None)
+        await ctx.send("🔓 Canal destravado. Todos podem voltar a enviar mensagens.")
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao destravar canal: {e}")
 
 # ================ Comando Delete ================
 @bot.command(name='delete')
 @commands.has_permissions(manage_messages=True)
 async def delete_messages(ctx, amount: int):
-    """Apaga uma quantidade de mensagens (máximo 100)."""
     if amount < 1:
         return await ctx.send("❌ Número inválido.")
     if amount > 100:
         amount = 100
-    deleted = await ctx.channel.purge(limit=amount)
-    msg = await ctx.send(f"🧹 {len(deleted)} mensagens apagadas.")
-    await asyncio.sleep(3)
-    await msg.delete()
+    try:
+        deleted = await ctx.channel.purge(limit=amount)
+        msg = await ctx.send(f"🧹 {len(deleted)} mensagens apagadas.")
+        await asyncio.sleep(3)
+        await msg.delete()
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao apagar mensagens: {e}")
 
-# ================ Comandos de XP / Perfil ================
+# ================ Comandos de XP / Perfil / Rank ================
 @bot.command(aliases=['perfil'])
 async def xp(ctx, member: discord.Member = None):
-    """Mostra o perfil com nome, avatar e XP."""
+    """Mostra o perfil com nome, avatar, XP e nível."""
     if member is None:
         member = ctx.author
-    total = get_count(ctx.guild.id, member.id)
-    xp = get_xp(total)
-    embed = discord.Embed(title=f"Perfil de {member.display_name}", color=discord.Color.blue())
+    
+    total_mensagens = get_count(ctx.guild.id, member.id)
+    xp = get_xp(total_mensagens)
+    nivel = get_level(xp)
+    
+    embed = discord.Embed(
+        title=f"Perfil de {member.display_name}",
+        color=discord.Color.blue()
+    )
     embed.set_thumbnail(url=member.display_avatar.url)
-    embed.add_field(name="Mensagens enviadas", value=total, inline=True)
-    embed.add_field(name="XP", value=xp, inline=True)
+    embed.add_field(name="📨 Mensagens", value=total_mensagens, inline=True)
+    embed.add_field(name="⭐ XP", value=f"{xp}", inline=True)
+    embed.add_field(name="🎯 Nível", value=f"{nivel}", inline=True)
+    
+    # Barra de progresso para o próximo nível
+    xp_atual = xp % 10
+    xp_necessario = 10
+    progresso = int((xp_atual / xp_necessario) * 10)
+    barra = "🟦" * progresso + "⬜" * (10 - progresso)
+    embed.add_field(
+        name=f"Progresso para nível {nivel + 1}",
+        value=f"{barra} ({xp_atual}/{xp_necessario} XP)",
+        inline=False
+    )
+    
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def rank(ctx):
+    """Mostra o top 5 usuários com mais XP no servidor."""
+    
+    # Pega todos os usuários do servidor com suas contagens
+    conn = sqlite3.connect(DB_FILENAME)
+    c = conn.cursor()
+    c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(ctx.guild.id),))
+    rows = c.fetchall()
+    conn.close()
+    
+    if not rows:
+        await ctx.send("❌ Nenhum dado de XP registrado ainda!")
+        return
+    
+    embed = discord.Embed(
+        title="🏆 Ranking - Top 5",
+        description="Os membros com mais XP do servidor",
+        color=discord.Color.gold()
+    )
+    
+    # Emojis de medalha para os 3 primeiros
+    medalhas = {1: "🥇", 2: "🥈", 3: "🥉", 4: "4️⃣", 5: "5️⃣"}
+    
+    count = 0
+    for row in rows:
+        user_id = int(row[0])
+        total_mensagens = row[1]
+        xp = get_xp(total_mensagens)
+        nivel = get_level(xp)
+        
+        # Tenta pegar o membro do servidor
+        member = ctx.guild.get_member(user_id)
+        
+        if member:
+            count += 1
+            if count > 5:
+                break
+            
+            nome = member.display_name
+            
+            embed.add_field(
+                name=f"{medalhas[count]} {nome}",
+                value=f"⭐ XP: **{xp}** | 🎯 Nível: **{nivel}** | 💬 Mensagens: {total_mensagens}",
+                inline=False
+            )
+    
+    if count == 0:
+        await ctx.send("❌ Nenhum membro encontrado no ranking.")
+        return
+    
     await ctx.send(embed=embed)
 
 # ================ Inicialização ================
