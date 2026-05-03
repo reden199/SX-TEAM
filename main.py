@@ -27,6 +27,27 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix='/', intents=intents, help_command=None)
 
+# ================ Restrição de canal ================
+CANAL_PERMITIDO = 1500291470530314331  # ID do canal onde os comandos são liberados para todos
+
+@bot.tree.interaction_check
+async def global_channel_restriction(interaction: discord.Interaction) -> bool:
+    # Administradores podem usar comandos em qualquer canal
+    if interaction.user.guild_permissions.administrator:
+        return True
+
+    # Verifica se o comando foi executado no canal permitido
+    if interaction.channel_id == CANAL_PERMITIDO:
+        return True
+
+    # Caso contrário, nega e avisa
+    await interaction.response.send_message(
+        f"❌ Comandos só podem ser usados no canal <#{CANAL_PERMITIDO}>. "
+        "Administradores podem usar em qualquer lugar.",
+        ephemeral=True
+    )
+    return False
+
 # ================ SQLite local ================
 DB_FILENAME = 'xp_data.db'
 db_changed = False
@@ -154,6 +175,35 @@ async def on_message(message):
     increment_count(message.guild.id, message.author.id)
     await bot.process_commands(message)
 
+# ================ Novo evento: boas-vindas e cargo automático ================
+@bot.event
+async def on_member_join(member):
+    # Cargo "Verificado" (ID fornecido)
+    cargo_verificado = member.guild.get_role(1500257493270401206)
+    if cargo_verificado:
+        try:
+            await member.add_roles(cargo_verificado)
+            print(f"Cargo Verificado atribuído a {member.display_name}")
+        except Exception as e:
+            print(f"Erro ao adicionar cargo Verificado: {e}")
+
+    # Canal de boas-vindas (ID fornecido)
+    canal_boasvindas = member.guild.get_channel(1500236759693266985)
+    if canal_boasvindas:
+        embed = discord.Embed(
+            title="👋 Seja bem vindo!",
+            description=f"{member.mention} acabou de entrar no servidor.",
+            color=discord.Color.green()
+        )
+        # Avatar do usuário como thumbnail (quadrado)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        # Se quiser o avatar redondo, seria necessário usar Pillow para criar uma imagem circular.
+        # No Discord o thumbnail sempre aparece quadrado.
+        try:
+            await canal_boasvindas.send(embed=embed)
+        except Exception as e:
+            print(f"Erro ao enviar mensagem de boas-vindas: {e}")
+
 # ================ Cálculo de XP e Nível ================
 def get_xp(total):
     return (total // 5) * 3
@@ -191,13 +241,11 @@ async def slash_unban(interaction: discord.Interaction, usuario: str):
             await interaction.response.send_message("Não há usuários banidos neste servidor.", ephemeral=True)
             return
 
-        # Estratégia 1: correspondência exata (nome#discriminador)
         encontrados = []
         for entry in bans:
             if str(entry.user) == usuario:
                 encontrados.append(entry.user)
 
-        # Estratégia 2: se não achou exato, busca por parte do nome (case-insensitive)
         if not encontrados:
             usuario_lower = usuario.lower()
             for entry in bans:
@@ -209,15 +257,13 @@ async def slash_unban(interaction: discord.Interaction, usuario: str):
             return
 
         if len(encontrados) > 1:
-            # Lista os possíveis para escolha (apenas informa, não desbana)
-            nomes = "\n".join(f"• {str(u)}" for u in encontrados[:10])  # máximo 10
+            nomes = "\n".join(f"• {str(u)}" for u in encontrados[:10])
             await interaction.response.send_message(
                 f"Vários usuários correspondem. Seja mais específico:\n{nomes}",
                 ephemeral=True
             )
             return
 
-        # Apenas um encontrado – desbane
         user_to_unban = encontrados[0]
         await interaction.guild.unban(user_to_unban)
         await interaction.response.send_message(f"{user_to_unban} foi desbanido com sucesso!")
