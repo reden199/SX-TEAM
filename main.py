@@ -10,7 +10,7 @@ from flask import Flask
 from threading import Thread
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account  # NOVA IMPORTAÇÃO (substitui oauth2client)
 
 # ================ Keep-alive no Render ================
 app = Flask('')
@@ -107,7 +107,7 @@ def get_count(guild_id, user_id):
         print(f"ERRO ao obter contagem: {e}")
         return 0
 
-# ================ Google Drive ================
+# ================ Google Drive (AGORA COM google-auth) ================
 FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID')
 DRIVE_FILE_NAME = 'xp_data.db'
 
@@ -116,7 +116,7 @@ def get_drive():
         "type": "service_account",
         "project_id": os.environ.get("GDRIVE_PROJECT_ID"),
         "private_key_id": os.environ.get("GDRIVE_PRIVATE_KEY_ID", ""),
-        "private_key": os.environ.get("GDRIVE_PRIVATE_KEY", "").replace('\\n', '\n'),
+        "private_key": os.environ.get("GDRIVE_PRIVATE_KEY", "").strip().replace('\\n', '\n'),
         "client_email": os.environ.get("GDRIVE_CLIENT_EMAIL"),
         "client_id": os.environ.get("GDRIVE_CLIENT_ID", ""),
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -124,8 +124,8 @@ def get_drive():
         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
         "client_x509_cert_url": os.environ.get("GDRIVE_CLIENT_CERT_URL", "")
     }
-    scope = ['https://www.googleapis.com/auth/drive.file']
-    credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    scopes = ['https://www.googleapis.com/auth/drive.file']
+    credentials = service_account.Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gauth = GoogleAuth()
     gauth.credentials = credentials
     return GoogleDrive(gauth)
@@ -380,7 +380,7 @@ async def slash_delete(interaction: discord.Interaction, quantidade: int):
 @bot.tree.command(name="xp", description="Mostra o perfil e progresso de XP de um usuário")
 @app_commands.describe(membro="Usuário (deixe em branco para ver o seu)")
 async def slash_xp(interaction: discord.Interaction, membro: discord.Member = None):
-    await interaction.response.defer()  # Evita timeout
+    await interaction.response.defer()
     if membro is None:
         membro = interaction.user
     total_mensagens = get_count(interaction.guild.id, membro.id)
@@ -404,7 +404,7 @@ async def slash_xp(interaction: discord.Interaction, membro: discord.Member = No
 
 @bot.tree.command(name="rank", description="Exibe o top 5 usuários com mais XP do servidor")
 async def slash_rank(interaction: discord.Interaction):
-    await interaction.response.defer()  # Evita timeout
+    await interaction.response.defer()
     try:
         conn = sqlite3.connect(DB_FILENAME)
         c = conn.cursor()
@@ -526,7 +526,7 @@ async def prefix_lock(ctx):
     try:
         await channel.set_permissions(guild.default_role, send_messages=False)
         await channel.set_permissions(guild.owner, send_messages=True)
-        await ctx.send("Canal travado. Apenas o dono do servidor pode enviar mensagens agora.")
+        await ctx.send("Canal travado.")
     except Exception as e:
         await ctx.send(f"Erro: {e}")
 
@@ -581,7 +581,6 @@ async def prefix_rank(ctx):
         conn.close()
         if not rows:
             return await ctx.send("Nenhum dado de XP registrado ainda!")
-
         embed = discord.Embed(title="Ranking - Top 5", color=discord.Color.gold())
         count = 0
         for row in rows:
