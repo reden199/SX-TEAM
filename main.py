@@ -440,6 +440,187 @@ async def slash_rank(interaction: discord.Interaction):
         return
     await interaction.response.send_message(embed=embed)
 
+# ================ PREFIX COMMANDS (comandos por texto) ================
+
+# --- MODERAÇÃO ---
+
+@bot.command(name='ban')
+@canal_restrito_texto()
+@commands.has_permissions(ban_members=True)
+async def prefix_ban(ctx, membro: discord.Member, *, motivo: str = "Não especificado"):
+    if membro == ctx.author:
+        return await ctx.send("Você não pode se banir.")
+    if membro.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+        return await ctx.send("Você não pode banir alguém com cargo superior ou igual ao seu.")
+    try:
+        await membro.ban(reason=motivo)
+        await ctx.send(f"{membro.mention} foi banido. Motivo: {motivo}")
+    except Exception as e:
+        await ctx.send(f"Erro ao banir: {e}")
+
+@bot.command(name='unban')
+@canal_restrito_texto()
+@commands.has_permissions(ban_members=True)
+async def prefix_unban(ctx, *, usuario: str):
+    try:
+        bans = [entry async for entry in ctx.guild.bans()]
+        if not bans:
+            return await ctx.send("Não há usuários banidos.")
+
+        encontrados = [entry.user for entry in bans if str(entry.user) == usuario]
+        if not encontrados:
+            usuario_lower = usuario.lower()
+            encontrados = [entry.user for entry in bans if usuario_lower in entry.user.name.lower() or usuario_lower in str(entry.user).lower()]
+
+        if not encontrados:
+            return await ctx.send("Nenhum usuário banido corresponde a esse nome.")
+        if len(encontrados) > 1:
+            nomes = "\n".join(f"• {u}" for u in encontrados[:10])
+            return await ctx.send(f"Vários usuários correspondem. Seja mais específico:\n{nomes}")
+
+        user_to_unban = encontrados[0]
+        await ctx.guild.unban(user_to_unban)
+        await ctx.send(f"{user_to_unban} foi desbanido.")
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+@bot.command(name='kick')
+@canal_restrito_texto()
+@commands.has_permissions(kick_members=True)
+async def prefix_kick(ctx, membro: discord.Member, *, motivo: str = "Não especificado"):
+    if membro == ctx.author:
+        return await ctx.send("Você não pode se expulsar.")
+    if membro.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+        return await ctx.send("Você não pode expulsar alguém com cargo superior ou igual ao seu.")
+    try:
+        await membro.kick(reason=motivo)
+        await ctx.send(f"{membro.mention} foi expulso. Motivo: {motivo}")
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+@bot.command(name='mute')
+@canal_restrito_texto()
+@commands.has_permissions(moderate_members=True)
+async def prefix_mute(ctx, membro: discord.Member, minutos: int = 60, *, motivo: str = "Não especificado"):
+    if membro == ctx.author:
+        return await ctx.send("Você não pode se mutar.")
+    if membro.top_role >= ctx.author.top_role and ctx.author != ctx.guild.owner:
+        return await ctx.send("Você não pode mutar alguém com cargo superior ou igual ao seu.")
+    try:
+        duration = minutos * 60
+        await membro.timeout(discord.utils.utcnow() + datetime.timedelta(seconds=duration), reason=motivo)
+        await ctx.send(f"{membro.mention} mutado por {minutos} minuto(s). Motivo: {motivo}")
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+@bot.command(name='unmute')
+@canal_restrito_texto()
+@commands.has_permissions(moderate_members=True)
+async def prefix_unmute(ctx, membro: discord.Member):
+    try:
+        if membro.timed_out_until is None:
+            return await ctx.send(f"{membro.mention} não está mutado.")
+        await membro.timeout(None)
+        await ctx.send(f"{membro.mention} foi desmutado.")
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+# --- GERENCIAMENTO DE CANAL ---
+
+@bot.command(name='lock')
+@canal_restrito_texto()
+@commands.has_permissions(manage_channels=True)
+async def prefix_lock(ctx):
+    channel = ctx.channel
+    guild = ctx.guild
+    try:
+        await channel.set_permissions(guild.default_role, send_messages=False)
+        await channel.set_permissions(guild.owner, send_messages=True)
+        await ctx.send("Canal travado. Apenas o dono do servidor pode enviar mensagens agora.")
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+@bot.command(name='unlock')
+@canal_restrito_texto()
+@commands.has_permissions(manage_channels=True)
+async def prefix_unlock(ctx):
+    channel = ctx.channel
+    guild = ctx.guild
+    try:
+        await channel.set_permissions(guild.default_role, send_messages=None)
+        await channel.set_permissions(guild.owner, send_messages=None)
+        await ctx.send("Canal destravado.")
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+# --- LIMPEZA ---
+
+@bot.command(name='delete')
+@canal_restrito_texto()
+@commands.has_permissions(manage_messages=True)
+async def prefix_delete(ctx, quantidade: int):
+    if quantidade < 1 or quantidade > 100:
+        return await ctx.send("Número inválido (mín 1, máx 100).")
+    try:
+        deleted = await ctx.channel.purge(limit=quantidade)
+        await ctx.send(f"{len(deleted)} mensagens apagadas.", delete_after=5)
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+# --- XP / PERFIL / RANK ---
+
+@bot.command(name='xp')
+@canal_restrito_texto()
+async def prefix_xp(ctx, membro: discord.Member = None):
+    if membro is None:
+        membro = ctx.author
+    total_mensagens = get_count(ctx.guild.id, membro.id)
+    xp = get_xp(total_mensagens)
+    nivel = get_level(xp)
+    embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.blue())
+    embed.set_thumbnail(url=membro.display_avatar.url)
+    embed.add_field(name="Mensagens", value=total_mensagens, inline=True)
+    embed.add_field(name="XP", value=xp, inline=True)
+    embed.add_field(name="Nível", value=nivel, inline=True)
+    xp_atual = xp % 10
+    progresso = int((xp_atual / 10) * 10)
+    barra = "[" + "#" * progresso + "-" * (10 - progresso) + "]"
+    embed.add_field(name=f"Progresso para nível {nivel + 1}", value=f"{barra} ({xp_atual}/10 XP)", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command(name='rank')
+@canal_restrito_texto()
+async def prefix_rank(ctx):
+    conn = sqlite3.connect(DB_FILENAME)
+    c = conn.cursor()
+    c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(ctx.guild.id),))
+    rows = c.fetchall()
+    conn.close()
+    if not rows:
+        return await ctx.send("Nenhum dado de XP registrado ainda!")
+
+    embed = discord.Embed(title="Ranking - Top 5", color=discord.Color.gold())
+    count = 0
+    for row in rows:
+        user_id = int(row[0])
+        total = row[1]
+        xp = get_xp(total)
+        nivel = get_level(xp)
+        member = ctx.guild.get_member(user_id)
+        if member is None:
+            continue
+        count += 1
+        if count > 5:
+            break
+        embed.add_field(
+            name=f"{count}. {member.display_name}",
+            value=f"XP: **{xp}** | Nível: **{nivel}** | Mensagens: {total}",
+            inline=False
+        )
+    if count == 0:
+        return await ctx.send("Nenhum membro encontrado no ranking.")
+    await ctx.send(embed=embed)
+
 # ================ Inicialização ================
 if __name__ == '__main__':
     keep_alive()
