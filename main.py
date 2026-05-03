@@ -52,23 +52,25 @@ async def global_channel_restriction(interaction: discord.Interaction) -> bool:
         pass
     return False
 
-# ================ Check de canal para prefix commands ================
-def canal_restrito_texto():
-    async def predicate(ctx):
-        # Administradores podem usar em qualquer lugar
-        if ctx.author.guild_permissions.administrator:
-            return True
-        # Canal permitido
-        if ctx.channel.id == CANAL_PERMITIDO:
-            return True
-        # Bloqueia e avisa
-        await ctx.send(
-            f"❌ Comandos só podem ser usados no canal <#{CANAL_PERMITIDO}>. "
-            "Administradores podem usar em qualquer lugar.",
-            delete_after=10
-        )
-        return False
-    return commands.check(predicate)
+# ================ Check global de canal para TODOS os prefix commands ================
+@bot.check
+async def global_text_channel_restriction(ctx):
+    """Bloqueia qualquer comando de texto fora do canal permitido (exceto admins)."""
+    # Administradores podem usar em qualquer lugar
+    if ctx.author.guild_permissions.administrator:
+        return True
+
+    # Canal permitido
+    if ctx.channel.id == CANAL_PERMITIDO:
+        return True
+
+    # Bloqueia e avisa
+    await ctx.send(
+        f"❌ Comandos só podem ser usados no canal <#{CANAL_PERMITIDO}>. "
+        "Administradores podem usar em qualquer lugar.",
+        delete_after=10
+    )
+    return False
     
 # ================ SQLite local ================
 DB_FILENAME = 'xp_data.db'
@@ -441,11 +443,11 @@ async def slash_rank(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 # ================ PREFIX COMMANDS (comandos por texto) ================
+# NÃO precise mais usar @canal_restrito_texto() – o @bot.check global já cuida de tudo.
 
 # --- MODERAÇÃO ---
 
 @bot.command(name='ban')
-@canal_restrito_texto()
 @commands.has_permissions(ban_members=True)
 async def prefix_ban(ctx, membro: discord.Member, *, motivo: str = "Não especificado"):
     if membro == ctx.author:
@@ -459,7 +461,6 @@ async def prefix_ban(ctx, membro: discord.Member, *, motivo: str = "Não especif
         await ctx.send(f"Erro ao banir: {e}")
 
 @bot.command(name='unban')
-@canal_restrito_texto()
 @commands.has_permissions(ban_members=True)
 async def prefix_unban(ctx, *, usuario: str):
     try:
@@ -485,7 +486,6 @@ async def prefix_unban(ctx, *, usuario: str):
         await ctx.send(f"Erro: {e}")
 
 @bot.command(name='kick')
-@canal_restrito_texto()
 @commands.has_permissions(kick_members=True)
 async def prefix_kick(ctx, membro: discord.Member, *, motivo: str = "Não especificado"):
     if membro == ctx.author:
@@ -499,7 +499,6 @@ async def prefix_kick(ctx, membro: discord.Member, *, motivo: str = "Não especi
         await ctx.send(f"Erro: {e}")
 
 @bot.command(name='mute')
-@canal_restrito_texto()
 @commands.has_permissions(moderate_members=True)
 async def prefix_mute(ctx, membro: discord.Member, minutos: int = 60, *, motivo: str = "Não especificado"):
     if membro == ctx.author:
@@ -514,7 +513,6 @@ async def prefix_mute(ctx, membro: discord.Member, minutos: int = 60, *, motivo:
         await ctx.send(f"Erro: {e}")
 
 @bot.command(name='unmute')
-@canal_restrito_texto()
 @commands.has_permissions(moderate_members=True)
 async def prefix_unmute(ctx, membro: discord.Member):
     try:
@@ -528,7 +526,6 @@ async def prefix_unmute(ctx, membro: discord.Member):
 # --- GERENCIAMENTO DE CANAL ---
 
 @bot.command(name='lock')
-@canal_restrito_texto()
 @commands.has_permissions(manage_channels=True)
 async def prefix_lock(ctx):
     channel = ctx.channel
@@ -541,7 +538,6 @@ async def prefix_lock(ctx):
         await ctx.send(f"Erro: {e}")
 
 @bot.command(name='unlock')
-@canal_restrito_texto()
 @commands.has_permissions(manage_channels=True)
 async def prefix_unlock(ctx):
     channel = ctx.channel
@@ -556,7 +552,6 @@ async def prefix_unlock(ctx):
 # --- LIMPEZA ---
 
 @bot.command(name='delete')
-@canal_restrito_texto()
 @commands.has_permissions(manage_messages=True)
 async def prefix_delete(ctx, quantidade: int):
     if quantidade < 1 or quantidade > 100:
@@ -570,7 +565,6 @@ async def prefix_delete(ctx, quantidade: int):
 # --- XP / PERFIL / RANK ---
 
 @bot.command(name='xp')
-@canal_restrito_texto()
 async def prefix_xp(ctx, membro: discord.Member = None):
     if membro is None:
         membro = ctx.author
@@ -589,7 +583,6 @@ async def prefix_xp(ctx, membro: discord.Member = None):
     await ctx.send(embed=embed)
 
 @bot.command(name='rank')
-@canal_restrito_texto()
 async def prefix_rank(ctx):
     conn = sqlite3.connect(DB_FILENAME)
     c = conn.cursor()
