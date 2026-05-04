@@ -1,4 +1,3 @@
-discord.py>=2.0.0
+discord.py
 flask
-google-api-python-client
-google-auth
+asyncpg
