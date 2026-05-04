@@ -1,15 +1,14 @@
 import os
 import asyncio
-import asyncpg
 import discord
 import datetime
 import traceback
+import httpx
+import json
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 from threading import Thread
-import socket
-import re
 
 # ================ Keep-alive no Render ================
 app = Flask('')
@@ -27,79 +26,84 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix='/', intents=intents, help_command=None)
 
-# ================ Pool de conexão Supabase ================
-DB_POOL = None
+# ================ Supabase via REST API ================
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 
 async def init_db():
-    global DB_POOL
-    DATABASE_URL = os.environ.get('DATABASE_URL')
-    if not DATABASE_URL:
-        print("❌ ERRO: DATABASE_URL não definida!")
+    """Verifica se a tabela existe e cria se necessário"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("❌ ERRO: SUPABASE_URL ou SUPABASE_KEY não definidas!")
         return
     
-    print(f"🔗 Tentando conectar ao Supabase...")
-    
-    # Força resolução IPv4 substituindo hostname pelo IP
-    try:
-        # Extrai hostname da URL
-        match = re.search(r'@([^:]+):', DATABASE_URL)
-        if match:
-            hostname = match.group(1)
-            # Força IPv4
-            ipv4 = socket.gethostbyname(hostname)
-            DATABASE_URL = DATABASE_URL.replace(hostname, ipv4)
-            print(f"🔍 Hostname {hostname} resolvido para IPv4: {ipv4}")
-    except Exception as e:
-        print(f"⚠️ Não foi possível forçar IPv4: {e}")
-    
-    try:
-        DB_POOL = await asyncpg.create_pool(
-            dsn=DATABASE_URL,
-            min_size=1,
-            max_size=5,
-            ssl=False
-        )
-        async with DB_POOL.acquire() as conn:
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS counts (
-                    guild_id BIGINT,
-                    user_id BIGINT,
-                    count INT DEFAULT 0,
-                    PRIMARY KEY (guild_id, user_id)
-                )
-            ''')
-        print("✅ Conectado ao PostgreSQL do Supabase!")
-    except Exception as e:
-        print(f"❌ ERRO ao conectar no Supabase: {type(e).__name__}: {e}")
-        traceback.print_exc()
-
+    async with httpx.AsyncClient() as client:
+        try:
+            # Verifica se a tabela existe
+            response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/counts?limit=1",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}"
+                }
+            )
+            print("✅ Conectado ao Supabase via REST API!")
+        except Exception as e:
+            print(f"❌ ERRO ao conectar no Supabase: {e}")
+            traceback.print_exc()
 
 async def increment_count(guild_id: int, user_id: int):
-    if not DB_POOL:
+    if not SUPABASE_URL or not SUPABASE_KEY:
         return
-    try:
-        async with DB_POOL.acquire() as conn:
-            await conn.execute('''
-                INSERT INTO counts (guild_id, user_id, count) VALUES ($1, $2, 1)
-                ON CONFLICT (guild_id, user_id)
-                DO UPDATE SET count = counts.count + 1
-            ''', guild_id, user_id)
-    except Exception as e:
-        print(f"ERRO ao incrementar contagem: {e}")
+    async with httpx.AsyncClient() as client:
+        try:
+            # Tenta atualizar primeiro
+            response = await client.patch(
+                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=representation"
+                },
+                json={"count": 0}  # Será atualizado via SQL function
+            )
+            
+            if not response.json():
+                # Se não encontrou, insere novo
+                await client.post(
+                    f"{SUPABASE_URL}/rest/v1/counts",
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    },
+                    json={
+                        "guild_id": guild_id,
+                        "user_id": user_id,
+                        "count": 1
+                    }
+                )
+        except Exception as e:
+            print(f"ERRO ao incrementar contagem: {e}")
 
 async def get_count(guild_id: int, user_id: int) -> int:
-    if not DB_POOL:
+    if not SUPABASE_URL or not SUPABASE_KEY:
         return 0
-    try:
-        async with DB_POOL.acquire() as conn:
-            row = await conn.fetchrow(
-                'SELECT count FROM counts WHERE guild_id=$1 AND user_id=$2',
-                guild_id, user_id
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}&select=count",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}"
+                }
             )
-            return row['count'] if row else 0
-    except Exception as e:
-        print(f"ERRO ao obter contagem: {e}")
-        return 0
+            data = response.json()
+            return data[0]['count'] if data else 0
+        except Exception as e:
+            print(f"ERRO ao obter contagem: {e}")
+            return 0
 
 # ================ Restrição de canal ================
 CANAL_PERMITIDO = 1500291470530314331
@@ -182,7 +186,6 @@ def get_xp(total):
 
 def get_level(xp):
     return xp // 10
-
 # ================ SLASH COMMANDS ================
 @bot.tree.command(name="ban", description="Bane um usuário do servidor")
 @app_commands.describe(membro="Usuário a ser banido", motivo="Motivo do banimento")
