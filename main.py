@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 from threading import Thread
+import socket
 
 # ================ Keep-alive no Render ================
 app = Flask('')
@@ -32,13 +33,18 @@ async def init_db():
     global DB_POOL
     DATABASE_URL = os.environ.get('DATABASE_URL')
     if not DATABASE_URL:
-        print("ERRO: DATABASE_URL não definida!")
+        print("❌ ERRO: DATABASE_URL não definida!")
         return
+    
+    print(f"🔗 Tentando conectar ao Supabase...")
+    
     try:
         DB_POOL = await asyncpg.create_pool(
             dsn=DATABASE_URL,
             min_size=1,
-            max_size=5
+            max_size=5,
+            ssl=False,           # Desabilita SSL
+            family=socket.AF_INET # Força IPv4
         )
         async with DB_POOL.acquire() as conn:
             await conn.execute('''
@@ -51,7 +57,7 @@ async def init_db():
             ''')
         print("✅ Conectado ao PostgreSQL do Supabase!")
     except Exception as e:
-        print(f"ERRO ao conectar no Supabase: {e}")
+        print(f"❌ ERRO ao conectar no Supabase: {type(e).__name__}: {e}")
         traceback.print_exc()
 
 async def increment_count(guild_id: int, user_id: int):
