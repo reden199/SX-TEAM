@@ -4,7 +4,6 @@ import discord
 import datetime
 import traceback
 import httpx
-import json
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask
@@ -31,14 +30,13 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 
 async def init_db():
-    """Verifica se a tabela existe e cria se necessário"""
+    """Verifica se a conexão com Supabase está funcionando"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("❌ ERRO: SUPABASE_URL ou SUPABASE_KEY não definidas!")
         return
     
     async with httpx.AsyncClient() as client:
         try:
-            # Verifica se a tabela existe
             response = await client.get(
                 f"{SUPABASE_URL}/rest/v1/counts?limit=1",
                 headers={
@@ -46,7 +44,7 @@ async def init_db():
                     "Authorization": f"Bearer {SUPABASE_KEY}"
                 }
             )
-            print("✅ Conectado ao Supabase via REST API!")
+            print(f"✅ Conectado ao Supabase via REST API! Status: {response.status_code}")
         except Exception as e:
             print(f"❌ ERRO ao conectar no Supabase: {e}")
             traceback.print_exc()
@@ -54,22 +52,34 @@ async def init_db():
 async def increment_count(guild_id: int, user_id: int):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
+    
     async with httpx.AsyncClient() as client:
         try:
-            # Tenta atualizar primeiro
-            response = await client.patch(
-                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}",
+            # Primeiro, busca o valor atual
+            response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}&select=count",
                 headers={
                     "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}",
-                    "Content-Type": "application/json",
-                    "Prefer": "return=representation"
-                },
-                json={"count": 0}  # Será atualizado via SQL function
+                    "Authorization": f"Bearer {SUPABASE_KEY}"
+                }
             )
+            data = response.json()
             
-            if not response.json():
-                # Se não encontrou, insere novo
+            if data:
+                # Atualiza existente
+                current_count = data[0]['count']
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}",
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    },
+                    json={"count": current_count + 1}
+                )
+            else:
+                # Insere novo
                 await client.post(
                     f"{SUPABASE_URL}/rest/v1/counts",
                     headers={
@@ -90,6 +100,7 @@ async def increment_count(guild_id: int, user_id: int):
 async def get_count(guild_id: int, user_id: int) -> int:
     if not SUPABASE_URL or not SUPABASE_KEY:
         return 0
+    
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
@@ -104,6 +115,25 @@ async def get_count(guild_id: int, user_id: int) -> int:
         except Exception as e:
             print(f"ERRO ao obter contagem: {e}")
             return 0
+
+async def get_top_users(guild_id: int, limit: int = 5):
+    """Retorna os top usuários por contagem"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&order=count.desc&limit={limit}",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}"
+                }
+            )
+            return response.json()
+        except Exception as e:
+            print(f"ERRO ao buscar ranking: {e}")
+            return []
 
 # ================ Restrição de canal ================
 CANAL_PERMITIDO = 1500291470530314331
@@ -186,6 +216,7 @@ def get_xp(total):
 
 def get_level(xp):
     return xp // 10
+
 # ================ SLASH COMMANDS ================
 @bot.tree.command(name="ban", description="Bane um usuário do servidor")
 @app_commands.describe(membro="Usuário a ser banido", motivo="Motivo do banimento")
@@ -324,10 +355,7 @@ async def slash_delete(interaction: discord.Interaction, quantidade: int):
 @bot.tree.command(name="xp", description="Mostra o perfil e progresso de XP de um usuário")
 @app_commands.describe(membro="Usuário (deixe em branco para ver o seu)")
 async def slash_xp(interaction: discord.Interaction, membro: discord.Member = None):
-    try:
-        await interaction.response.defer()
-    except discord.errors.NotFound:
-        return
+    await interaction.response.defer()
     if membro is None:
         membro = interaction.user
     total_mensagens = await get_count(interaction.guild.id, membro.id)
@@ -351,16 +379,9 @@ async def slash_xp(interaction: discord.Interaction, membro: discord.Member = No
 
 @bot.tree.command(name="rank", description="Exibe o top 5 usuários com mais XP do servidor")
 async def slash_rank(interaction: discord.Interaction):
+    await interaction.response.defer()
     try:
-        await interaction.response.defer()
-    except discord.errors.NotFound:
-        return
-    try:
-        async with DB_POOL.acquire() as conn:
-            rows = await conn.fetch(
-                'SELECT user_id, count FROM counts WHERE guild_id=$1 ORDER BY count DESC LIMIT 5',
-                interaction.guild.id
-            )
+        rows = await get_top_users(interaction.guild.id, 5)
         if not rows:
             await interaction.followup.send("Nenhum dado de XP registrado ainda!", ephemeral=True)
             return
@@ -518,11 +539,7 @@ async def prefix_xp(ctx, membro: discord.Member = None):
 @bot.command(name='rank')
 async def prefix_rank(ctx):
     try:
-        async with DB_POOL.acquire() as conn:
-            rows = await conn.fetch(
-                'SELECT user_id, count FROM counts WHERE guild_id=$1 ORDER BY count DESC LIMIT 5',
-                ctx.guild.id
-            )
+        rows = await get_top_users(ctx.guild.id, 5)
         if not rows:
             return await ctx.send("Nenhum dado de XP registrado ainda!")
         embed = discord.Embed(title="Ranking - Top 5", color=discord.Color.gold())
