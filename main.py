@@ -9,6 +9,7 @@ from discord.ext import commands
 from flask import Flask
 from threading import Thread
 import socket
+import re
 
 # ================ Keep-alive no Render ================
 app = Flask('')
@@ -38,13 +39,25 @@ async def init_db():
     
     print(f"🔗 Tentando conectar ao Supabase...")
     
+    # Força resolução IPv4 substituindo hostname pelo IP
+    try:
+        # Extrai hostname da URL
+        match = re.search(r'@([^:]+):', DATABASE_URL)
+        if match:
+            hostname = match.group(1)
+            # Força IPv4
+            ipv4 = socket.gethostbyname(hostname)
+            DATABASE_URL = DATABASE_URL.replace(hostname, ipv4)
+            print(f"🔍 Hostname {hostname} resolvido para IPv4: {ipv4}")
+    except Exception as e:
+        print(f"⚠️ Não foi possível forçar IPv4: {e}")
+    
     try:
         DB_POOL = await asyncpg.create_pool(
             dsn=DATABASE_URL,
             min_size=1,
             max_size=5,
-            ssl=False,           # Desabilita SSL
-            family=socket.AF_INET # Força IPv4
+            ssl=False
         )
         async with DB_POOL.acquire() as conn:
             await conn.execute('''
@@ -59,6 +72,7 @@ async def init_db():
     except Exception as e:
         print(f"❌ ERRO ao conectar no Supabase: {type(e).__name__}: {e}")
         traceback.print_exc()
+
 
 async def increment_count(guild_id: int, user_id: int):
     if not DB_POOL:
