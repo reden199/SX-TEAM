@@ -1,6 +1,6 @@
 import os
-import sqlite3
 import asyncio
+import asyncpg
 import discord
 import datetime
 import traceback
@@ -8,10 +8,6 @@ from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 from threading import Thread
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
-import io
 
 # ================ Keep-alive no Render ================
 app = Flask('')
@@ -28,6 +24,62 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix='/', intents=intents, help_command=None)
+
+# ================ Pool de conexão Supabase ================
+DB_POOL = None
+
+async def init_db():
+    global DB_POOL
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    if not DATABASE_URL:
+        print("ERRO: DATABASE_URL não definida!")
+        return
+    try:
+        DB_POOL = await asyncpg.create_pool(
+            dsn=DATABASE_URL,
+            min_size=1,
+            max_size=5
+        )
+        async with DB_POOL.acquire() as conn:
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS counts (
+                    guild_id BIGINT,
+                    user_id BIGINT,
+                    count INT DEFAULT 0,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+            ''')
+        print("✅ Conectado ao PostgreSQL do Supabase!")
+    except Exception as e:
+        print(f"ERRO ao conectar no Supabase: {e}")
+        traceback.print_exc()
+
+async def increment_count(guild_id: int, user_id: int):
+    if not DB_POOL:
+        return
+    try:
+        async with DB_POOL.acquire() as conn:
+            await conn.execute('''
+                INSERT INTO counts (guild_id, user_id, count) VALUES ($1, $2, 1)
+                ON CONFLICT (guild_id, user_id)
+                DO UPDATE SET count = counts.count + 1
+            ''', guild_id, user_id)
+    except Exception as e:
+        print(f"ERRO ao incrementar contagem: {e}")
+
+async def get_count(guild_id: int, user_id: int) -> int:
+    if not DB_POOL:
+        return 0
+    try:
+        async with DB_POOL.acquire() as conn:
+            row = await conn.fetchrow(
+                'SELECT count FROM counts WHERE guild_id=$1 AND user_id=$2',
+                guild_id, user_id
+            )
+            return row['count'] if row else 0
+    except Exception as e:
+        print(f"ERRO ao obter contagem: {e}")
+        return 0
 
 # ================ Restrição de canal ================
 CANAL_PERMITIDO = 1500291470530314331
@@ -62,147 +114,10 @@ async def global_text_channel_restriction(ctx):
     )
     return False
 
-# ================ SQLite local ================
-DB_FILENAME = os.path.join(os.getcwd(), 'xp_data.db')
-db_changed = False
-db_lock = asyncio.Lock()
-
-def init_db():
-    try:
-        conn = sqlite3.connect(DB_FILENAME)
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS counts (
-            guild_id TEXT, user_id TEXT, count INTEGER DEFAULT 0,
-            PRIMARY KEY (guild_id, user_id))''')
-        conn.commit()
-        conn.close()
-        print("Banco local criado/verificado com sucesso.")
-    except Exception as e:
-        print(f"ERRO ao inicializar banco local: {e}")
-        traceback.print_exc()
-
-def increment_count(guild_id, user_id):
-    global db_changed
-    try:
-        conn = sqlite3.connect(DB_FILENAME)
-        c = conn.cursor()
-        c.execute('''INSERT INTO counts (guild_id, user_id, count) VALUES (?,?,1)
-                     ON CONFLICT(guild_id, user_id) DO UPDATE SET count = count + 1''',
-                  (str(guild_id), str(user_id)))
-        conn.commit()
-        conn.close()
-        db_changed = True
-    except Exception as e:
-        print(f"ERRO ao incrementar contagem: {e}")
-
-def get_count(guild_id, user_id):
-    try:
-        conn = sqlite3.connect(DB_FILENAME)
-        c = conn.cursor()
-        c.execute('SELECT count FROM counts WHERE guild_id=? AND user_id=?',
-                  (str(guild_id), str(user_id)))
-        row = c.fetchone()
-        conn.close()
-        return row[0] if row else 0
-    except Exception as e:
-        print(f"ERRO ao obter contagem: {e}")
-        return 0
-
-# ================ Google Drive (API oficial) ================
-FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID')
-DRIVE_FILE_NAME = 'xp_data.db'
-
-def get_drive_service():
-    creds_dict = {
-        "type": "service_account",
-        "project_id": os.environ.get("GDRIVE_PROJECT_ID"),
-        "private_key_id": os.environ.get("GDRIVE_PRIVATE_KEY_ID", ""),
-        "private_key": os.environ.get("GDRIVE_PRIVATE_KEY", "").strip().replace('\\n', '\n'),
-        "client_email": os.environ.get("GDRIVE_CLIENT_EMAIL"),
-        "client_id": os.environ.get("GDRIVE_CLIENT_ID", ""),
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_x509_cert_url": os.environ.get("GDRIVE_CLIENT_CERT_URL", "")
-    }
-    credentials = service_account.Credentials.from_service_account_info(
-        creds_dict, scopes=['https://www.googleapis.com/auth/drive.file']
-    )
-    return build('drive', 'v3', credentials=credentials)
-
-async def upload_to_drive():
-    if not FOLDER_ID:
-        print("FOLDER_ID não definido, upload ignorado.")
-        return
-    global db_changed
-    async with db_lock:
-        try:
-            service = get_drive_service()
-            # Remove versão antiga
-            response = service.files().list(
-                q=f"'{FOLDER_ID}' in parents and name='{DRIVE_FILE_NAME}' and trashed=false",
-                spaces='drive',
-                fields='files(id)'
-            ).execute()
-            for f in response.get('files', []):
-                service.files().delete(fileId=f['id']).execute()
-
-            # Upload do novo arquivo
-            media = MediaFileUpload(DB_FILENAME, mimetype='application/octet-stream')
-            file_metadata = {
-                'name': DRIVE_FILE_NAME,
-                'parents': [FOLDER_ID]
-            }
-            service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-            db_changed = False
-            print("Banco sincronizado com Google Drive.")
-        except Exception as e:
-            print(f"ERRO no upload para Drive: {type(e).__name__}: {e}")
-            traceback.print_exc()
-
-async def download_from_drive():
-    if not FOLDER_ID:
-        print("FOLDER_ID não definido, download ignorado.")
-        return
-    try:
-        service = get_drive_service()
-        response = service.files().list(
-            q=f"'{FOLDER_ID}' in parents and name='{DRIVE_FILE_NAME}' and trashed=false",
-            spaces='drive',
-            fields='files(id, size)',
-            orderBy='modifiedTime desc',
-            pageSize=1
-        ).execute()
-        files = response.get('files', [])
-        if files:
-            file_id = files[0]['id']
-            request = service.files().get_media(fileId=file_id)
-            fh = io.FileIO(DB_FILENAME, 'wb')
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while not done:
-                status, done = downloader.next_chunk()
-            print(f"Banco baixado do Drive ({files[0].get('size', '?')} bytes).")
-        else:
-            print("Nenhum banco encontrado no Drive, iniciando zerado.")
-    except Exception as e:
-        print(f"ERRO ao baixar do Drive: {type(e).__name__}: {e}")
-        traceback.print_exc()
-
-async def sync_loop():
-    await bot.wait_until_ready()
-    await download_from_drive()
-    init_db()
-    global db_changed
-    db_changed = True
-    while not bot.is_closed():
-        await asyncio.sleep(30)
-        if db_changed:
-            await upload_to_drive()
-
 # ================ Eventos ================
 @bot.event
 async def on_ready():
+    await init_db()
     print(f'{bot.user} online')
     await bot.change_presence(activity=discord.Game("Use /comando"))
     try:
@@ -210,13 +125,12 @@ async def on_ready():
         print(f"Slash commands sincronizados: {len(synced)} comandos")
     except Exception as e:
         print(f"Erro ao sincronizar comandos: {e}")
-    bot.loop.create_task(sync_loop())
 
 @bot.event
 async def on_message(message):
     if message.author.bot or not message.guild:
         return
-    increment_count(message.guild.id, message.author.id)
+    await increment_count(message.guild.id, message.author.id)
     await bot.process_commands(message)
 
 @bot.event
@@ -390,10 +304,10 @@ async def slash_xp(interaction: discord.Interaction, membro: discord.Member = No
     try:
         await interaction.response.defer()
     except discord.errors.NotFound:
-        return  # interação inválida, ignora
+        return
     if membro is None:
         membro = interaction.user
-    total_mensagens = get_count(interaction.guild.id, membro.id)
+    total_mensagens = await get_count(interaction.guild.id, membro.id)
     xp = get_xp(total_mensagens)
     nivel = get_level(xp)
     embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.blue())
@@ -419,30 +333,28 @@ async def slash_rank(interaction: discord.Interaction):
     except discord.errors.NotFound:
         return
     try:
-        conn = sqlite3.connect(DB_FILENAME)
-        c = conn.cursor()
-        c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(interaction.guild.id),))
-        rows = c.fetchall()
-        conn.close()
+        async with DB_POOL.acquire() as conn:
+            rows = await conn.fetch(
+                'SELECT user_id, count FROM counts WHERE guild_id=$1 ORDER BY count DESC LIMIT 5',
+                interaction.guild.id
+            )
         if not rows:
             await interaction.followup.send("Nenhum dado de XP registrado ainda!", ephemeral=True)
             return
         embed = discord.Embed(title="Ranking - Top 5", description="Os membros com mais XP do servidor", color=discord.Color.gold())
-        posicoes = {1: "1.", 2: "2.", 3: "3.", 4: "4.", 5: "5."}
+        posicoes = {0: "1.", 1: "2.", 2: "3.", 3: "4.", 4: "5."}
         count = 0
-        for row in rows:
-            user_id = int(row[0])
-            total_mensagens = row[1]
+        for i, row in enumerate(rows):
+            user_id = row['user_id']
+            total_mensagens = row['count']
             xp = get_xp(total_mensagens)
             nivel = get_level(xp)
             member = interaction.guild.get_member(user_id)
             if member is None:
                 continue
             count += 1
-            if count > 5:
-                break
             embed.add_field(
-                name=f"{posicoes[count]} {member.display_name}",
+                name=f"{posicoes[i]} {member.display_name}",
                 value=f"XP: **{xp}** | Nível: **{nivel}** | Mensagens: {total_mensagens}",
                 inline=False
             )
@@ -453,9 +365,7 @@ async def slash_rank(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"Erro ao gerar ranking: {e}", ephemeral=True)
 
-# ================ PREFIX COMMANDS (mantidos iguais) ================
-# ... (todos os comandos prefix mantidos como estavam, sem alterações)
-
+# ================ PREFIX COMMANDS ================
 @bot.command(name='ban')
 @commands.has_permissions(ban_members=True)
 async def prefix_ban(ctx, membro: discord.Member, *, motivo: str = "Não especificado"):
@@ -568,7 +478,7 @@ async def prefix_delete(ctx, quantidade: int):
 async def prefix_xp(ctx, membro: discord.Member = None):
     if membro is None:
         membro = ctx.author
-    total_mensagens = get_count(ctx.guild.id, membro.id)
+    total_mensagens = await get_count(ctx.guild.id, membro.id)
     xp = get_xp(total_mensagens)
     nivel = get_level(xp)
     embed = discord.Embed(title=f"Perfil de {membro.display_name}", color=discord.Color.blue())
@@ -585,28 +495,26 @@ async def prefix_xp(ctx, membro: discord.Member = None):
 @bot.command(name='rank')
 async def prefix_rank(ctx):
     try:
-        conn = sqlite3.connect(DB_FILENAME)
-        c = conn.cursor()
-        c.execute('SELECT user_id, count FROM counts WHERE guild_id = ? ORDER BY count DESC', (str(ctx.guild.id),))
-        rows = c.fetchall()
-        conn.close()
+        async with DB_POOL.acquire() as conn:
+            rows = await conn.fetch(
+                'SELECT user_id, count FROM counts WHERE guild_id=$1 ORDER BY count DESC LIMIT 5',
+                ctx.guild.id
+            )
         if not rows:
             return await ctx.send("Nenhum dado de XP registrado ainda!")
         embed = discord.Embed(title="Ranking - Top 5", color=discord.Color.gold())
         count = 0
-        for row in rows:
-            user_id = int(row[0])
-            total = row[1]
+        for i, row in enumerate(rows):
+            user_id = row['user_id']
+            total = row['count']
             xp = get_xp(total)
             nivel = get_level(xp)
             member = ctx.guild.get_member(user_id)
             if member is None:
                 continue
             count += 1
-            if count > 5:
-                break
             embed.add_field(
-                name=f"{count}. {member.display_name}",
+                name=f"{i+1}. {member.display_name}",
                 value=f"XP: **{xp}** | Nível: **{nivel}** | Mensagens: {total}",
                 inline=False
             )
