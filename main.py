@@ -1,3 +1,5 @@
+eu nao quero que os usuarios ganhe xp extra 
+
 import os
 import asyncio
 import discord
@@ -1103,21 +1105,11 @@ async def slash_caracoroa(interaction: discord.Interaction, escolha: str = None)
     
     resultado = random.choice(["cara", "coroa"])
     emoji_resultado = "👤" if resultado == "cara" else "🦅"
-    
+
     if escolha:
         if escolha == resultado:
             mensagem = f"🎉 **Você acertou!** Deu **{emoji_resultado} {resultado.upper()}**!"
             cor = discord.Color.green()
-            xp_bonus = 5
-            
-            # Bônus de XP por acertar (opcional)
-            await increment_count(interaction.guild.id, interaction.user.id)
-            await increment_count(interaction.guild.id, interaction.user.id)
-            await increment_count(interaction.guild.id, interaction.user.id)
-            await increment_count(interaction.guild.id, interaction.user.id)
-            await increment_count(interaction.guild.id, interaction.user.id)
-            
-            mensagem += f"\n🌟 Você ganhou **+{xp_bonus} mensagens** de XP!"
         else:
             mensagem = f"😢 **Você errou!** Deu **{emoji_resultado} {resultado.upper()}**!"
             cor = discord.Color.red()
@@ -1176,38 +1168,29 @@ async def slash_slot(interaction: discord.Interaction):
     resultado = f"{col1} | {col2} | {col3}"
     
     # Verifica premiação
+    # Verifica premiação
     if col1 == col2 == col3:
         if col1 == "7️⃣":
             mensagem = "🎰 **JACKPOT!!!** 3x 7️⃣! Que sorte incrível!"
             cor = discord.Color.gold()
-            xp_bonus = 30
         elif col1 == "💎":
             mensagem = "💎 **Diamantes!** Que luxo!"
             cor = discord.Color.blue()
-            xp_bonus = 20
         else:
             mensagem = f"🎉 **TRÊS IGUAIS!** Muito bem!"
             cor = discord.Color.green()
-            xp_bonus = 15
     elif col1 == col2 or col2 == col3 or col1 == col3:
         if "7️⃣" in [col1, col2, col3] or "💎" in [col1, col2, col3]:
             mensagem = "👍 **Dupla com símbolo raro!** Quase lá!"
             cor = discord.Color.orange()
-            xp_bonus = 10
         else:
             mensagem = "👍 **Dois iguais!** Passou perto!"
             cor = discord.Color.orange()
-            xp_bonus = 5
     else:
         mensagem = "😢 **Nada dessa vez...** Tente novamente!"
         cor = discord.Color.red()
-        xp_bonus = 0
     
     # Bônus de XP
-    if xp_bonus > 0:
-        for _ in range(xp_bonus):
-            await increment_count(interaction.guild.id, interaction.user.id)
-        mensagem += f"\n🌟 Você ganhou **+{xp_bonus} mensagens** de XP!"
     
     embed = discord.Embed(
         title="🎰 Caça-Níquel",
@@ -1311,18 +1294,11 @@ async def slash_palpite(interaction: discord.Interaction, palavra: str):
     
     if palavra_tentada == jogo["palavra"]:
         tentativas = jogo["tentativas"]
-        xp_bonus = 10 - (tentativas * 2)
-        if xp_bonus < 2:
-            xp_bonus = 2
-        
-        for _ in range(xp_bonus):
-            await increment_count(interaction.guild.id, interaction.user.id)
         
         embed = discord.Embed(
             title="🎉 **VOCÊ ACERTOU!**",
             description=f"A palavra era: **{jogo['palavra'].upper()}**\n"
-                        f"Tentativas: **{tentativas}**\n"
-                        f"🌟 XP bônus: **+{xp_bonus}**",
+                        f"Tentativas: **{tentativas}**",
             color=discord.Color.green()
         )
         embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
@@ -1513,10 +1489,7 @@ async def slash_jogar(interaction: discord.Interaction, posicao: str):
         )
         
         # XP bônus para o vencedor
-        for _ in range(10):
-            await increment_count(interaction.guild.id, user_id)
-        
-        embed.set_footer(text="🌟 Vencedor ganhou +10 XP!")
+        embed.set_footer(text="🏆 Jogo finalizado!")
         del jogos_velha[jogo_id_encontrado]
         await interaction.response.send_message(embed=embed)
         return
