@@ -839,6 +839,16 @@ class PPTView(discord.ui.View):
     async def on_timeout(self):
         for child in self.children:
             child.disabled = True
+        if hasattr(self, 'message'):
+            embed = self.message.embeds[0]
+            embed.add_field(name="⏰ Tempo esgotado!", value="Use /ppt para jogar novamente.", inline=False)
+            embed.color = discord.Color.light_grey()
+            await self.message.edit(embed=embed, view=self)
+
+    def enable_game_buttons(self, enabled: bool):
+        self.pedra.disabled = not enabled
+        self.papel.disabled = not enabled
+        self.tesoura.disabled = not enabled
 
     @discord.ui.button(label="🪨 Pedra", style=discord.ButtonStyle.gray)
     async def pedra(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -854,12 +864,12 @@ class PPTView(discord.ui.View):
 
     async def processar(self, interaction: discord.Interaction, escolha: str):
         if self.finished:
-            await interaction.response.send_message("Jogo já finalizado! Use /ppt para jogar novamente.", ephemeral=True)
+            await interaction.response.send_message("Jogo já finalizado! Clique em **Reiniciar** para jogar novamente.", ephemeral=True)
             return
         
         self.finished = True
-        for child in self.children:
-            child.disabled = True
+        self.enable_game_buttons(False)
+        self.reiniciar.disabled = False
         
         opcoes = ["pedra", "papel", "tesoura"]
         emojis = {"pedra": "🪨", "papel": "📄", "tesoura": "✂️"}
@@ -881,7 +891,22 @@ class PPTView(discord.ui.View):
         embed.add_field(name="Você escolheu", value=f"{emojis[escolha]} {escolha.capitalize()}", inline=True)
         embed.add_field(name="Bot escolheu", value=f"{emojis[bot_escolha]} {bot_escolha.capitalize()}", inline=True)
         embed.add_field(name="Resultado", value=resultado, inline=False)
-        embed.set_footer(text="Jogo finalizado! Use /ppt para jogar novamente.")
+        embed.set_footer(text="Clique em Reiniciar para jogar novamente!")
+        
+        self.message = await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="🔄 Reiniciar", style=discord.ButtonStyle.green, disabled=True)
+    async def reiniciar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.finished = False
+        self.enable_game_buttons(True)
+        self.reiniciar.disabled = True
+        
+        embed = discord.Embed(
+            title="🪨📄✂️ Pedra, Papel e Tesoura",
+            description="Clique em um dos botões abaixo para jogar!",
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
         
         await interaction.response.edit_message(embed=embed, view=self)
 
@@ -1065,6 +1090,16 @@ class CaraCoroaView(discord.ui.View):
     async def on_timeout(self):
         for child in self.children:
             child.disabled = True
+        if hasattr(self, 'message'):
+            embed = self.message.embeds[0]
+            embed.add_field(name="⏰ Tempo esgotado!", value="Use /caracoroa para jogar novamente.", inline=False)
+            embed.color = discord.Color.light_grey()
+            await self.message.edit(embed=embed, view=self)
+
+    def enable_buttons(self, enabled: bool):
+        self.cara.disabled = not enabled
+        self.coroa.disabled = not enabled
+        self.girar.disabled = not enabled
 
     @discord.ui.button(label="👤 Cara", style=discord.ButtonStyle.gray)
     async def cara(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1080,12 +1115,12 @@ class CaraCoroaView(discord.ui.View):
 
     async def processar(self, interaction: discord.Interaction, escolha: str):
         if self.finished:
-            await interaction.response.send_message("Jogo já finalizado! Use /caracoroa para jogar novamente.", ephemeral=True)
+            await interaction.response.send_message("Clique em **Reiniciar** para jogar novamente!", ephemeral=True)
             return
         
         self.finished = True
-        for child in self.children:
-            child.disabled = True
+        self.enable_buttons(False)
+        self.reiniciar.disabled = False
         
         resultado = random.choice(["cara", "coroa"])
         emoji_resultado = "👤" if resultado == "cara" else "🦅"
@@ -1105,7 +1140,22 @@ class CaraCoroaView(discord.ui.View):
         if escolha:
             embed.add_field(name="Sua aposta", value=f"{'👤' if escolha == 'cara' else '🦅'} {escolha.upper()}", inline=True)
             embed.add_field(name="Resultado", value=f"{emoji_resultado} {resultado.upper()}", inline=True)
-        embed.set_footer(text="Jogo finalizado! Use /caracoroa para jogar novamente.")
+        embed.set_footer(text="Clique em Reiniciar para jogar novamente!")
+        
+        self.message = await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="🔄 Reiniciar", style=discord.ButtonStyle.green, row=1, disabled=True)
+    async def reiniciar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.finished = False
+        self.enable_buttons(True)
+        self.reiniciar.disabled = True
+        
+        embed = discord.Embed(
+            title="🪙 Cara ou Coroa",
+            description="Escolha uma opção ou só gire a moeda!",
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
         
         await interaction.response.edit_message(embed=embed, view=self)
 
@@ -1122,29 +1172,63 @@ async def slash_caracoroa(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view)
 
 # ================ DADO ================
-@bot.tree.command(name="dado", description="🎲 Rola um dado com o número de lados que você escolher")
-@app_commands.describe(lados="Número de lados do dado (padrão: 6)")
-async def slash_dado(interaction: discord.Interaction, lados: int = 6):
-    if lados < 2:
-        await interaction.response.send_message("❌ O dado precisa ter pelo menos 2 lados!", ephemeral=True)
-        return
-    if lados > 1000:
-        await interaction.response.send_message("❌ Máximo de 1000 lados!", ephemeral=True)
-        return
-    
-    resultado = random.randint(1, lados)
-    
-    dados_especiais = {6: "🎲", 20: "🎯", 10: "🔟", 100: "💯"}
-    emoji_dado = dados_especiais.get(lados, "🎲")
-    
+class DadoView(discord.ui.View):
+    def __init__(self, author_id):
+        super().__init__(timeout=30)
+        self.author_id = author_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Só quem iniciou pode jogar!", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if hasattr(self, 'message'):
+            embed = self.message.embeds[0]
+            embed.add_field(name="⏰ Tempo esgotado!", value="Use /dado para jogar novamente.", inline=False)
+            embed.color = discord.Color.light_grey()
+            await self.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🎲 D6", style=discord.ButtonStyle.gray)
+    async def d6(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.rolar(interaction, 6)
+
+    @discord.ui.button(label="🎯 D20", style=discord.ButtonStyle.gray)
+    async def d20(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.rolar(interaction, 20)
+
+    @discord.ui.button(label="💯 D100", style=discord.ButtonStyle.gray)
+    async def d100(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.rolar(interaction, 100)
+
+    async def rolar(self, interaction: discord.Interaction, lados: int):
+        resultado = random.randint(1, lados)
+        dados_especiais = {6: "🎲", 20: "🎯", 10: "🔟", 100: "💯"}
+        emoji_dado = dados_especiais.get(lados, "🎲")
+        
+        embed = discord.Embed(
+            title=f"{emoji_dado} D{lados}",
+            description=f"## {resultado}",
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text=f"Rolado por {interaction.user.display_name} | 1-{lados}")
+        
+        self.message = await interaction.response.edit_message(embed=embed, view=self)
+
+@bot.tree.command(name="dado", description="🎲 Rola um dado!")
+async def slash_dado(interaction: discord.Interaction):
     embed = discord.Embed(
-        title=f"{emoji_dado} D{lados}",
-        description=f"## {resultado}",
+        title="🎲 Escolha seu dado!",
+        description="Clique em um dos botões abaixo:",
         color=discord.Color.blue()
     )
-    embed.set_footer(text=f"Rolado por {interaction.user.display_name} | 1-{lados}")
+    embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
     
-    await interaction.response.send_message(embed=embed)
+    view = DadoView(interaction.user.id)
+    await interaction.response.send_message(embed=embed, view=view)
 
 # ================ SLOT ================
 @bot.tree.command(name="slot", description="🎰 Joga na máquina caça-níquel")
@@ -1190,26 +1274,89 @@ async def slash_slot(interaction: discord.Interaction):
 # ================ PALAVRA EMBARALHADA COM BOTÕES ================
 jogos_embaralhar = {}
 
-class PalavraButtonView(discord.ui.View):
-    def __init__(self, author_id, jogos_embaralhar_ref, user_id):
+class PalavraModal(discord.ui.Modal, title="📝 Digite a palavra"):
+    def __init__(self, jogos_ref, user_id, view):
+        super().__init__()
+        self.jogos_ref = jogos_ref
+        self.user_id = user_id
+        self.view_ref = view
+    
+    resposta = discord.ui.TextInput(
+        label="Qual é a palavra?",
+        placeholder="Digite aqui sua resposta...",
+        required=True,
+        min_length=1,
+        max_length=50
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        jogo = self.jogos_ref.get(self.user_id)
+        if not jogo:
+            await interaction.response.send_message("Jogo não encontrado!", ephemeral=True)
+            return
+        
+        palavra_tentada = self.resposta.value.lower().strip()
+        jogo["tentativas"] += 1
+        
+        if palavra_tentada == jogo["palavra"]:
+            embed = discord.Embed(
+                title="🎉 **VOCÊ ACERTOU!**",
+                description=f"**Palavra:** `{jogo['embaralhada']}`\n\n**Resposta:** **{jogo['palavra'].upper()}**\nTentativas: **{jogo['tentativas']}**",
+                color=discord.Color.green()
+            )
+            embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+            for child in self.view_ref.children:
+                child.disabled = True
+            if self.user_id in self.jogos_ref:
+                del self.jogos_ref[self.user_id]
+            await interaction.response.edit_message(embed=embed, view=self.view_ref)
+            return
+        
+        if jogo["tentativas"] >= 5:
+            embed = discord.Embed(
+                title="😢 **VOCÊ PERDEU!**",
+                description=f"**Palavra:** `{jogo['embaralhada']}`\n\n**Resposta:** **{jogo['palavra'].upper()}**\nTentativas: {jogo['tentativas']}/5",
+                color=discord.Color.red()
+            )
+            embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+            for child in self.view_ref.children:
+                child.disabled = True
+            if self.user_id in self.jogos_ref:
+                del self.jogos_ref[self.user_id]
+            await interaction.response.edit_message(embed=embed, view=self.view_ref)
+            return
+        
+        # Dica visual com emojis
+        dica = []
+        for i, letra in enumerate(palavra_tentada):
+            if i < len(jogo["palavra"]):
+                if letra == jogo["palavra"][i]:
+                    dica.append(f"🟢{letra.upper()}")
+                elif letra in jogo["palavra"]:
+                    dica.append(f"🟡{letra}")
+                else:
+                    dica.append(f"⚫{letra}")
+        dica_str = " ".join(dica)
+        
+        embed = discord.Embed(
+            title="📝 Palavra Embaralhada",
+            description=f"**Palavra:** `{jogo['embaralhada']}`\n\n"
+                        f"❌ **{palavra_tentada.upper()}** está incorreto!\n\n"
+                        f"Dica: {dica_str}\n\n"
+                        f"📏 **{len(jogo['palavra'])} letras**\n"
+                        f"Tentativas: **{jogo['tentativas']}/5**",
+            color=discord.Color.orange()
+        )
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name} | Use os botões ou clique em 'Digitar Palavra'")
+        
+        await interaction.response.edit_message(embed=embed, view=self.view_ref)
+
+class EmbaralharView(discord.ui.View):
+    def __init__(self, author_id, jogos_ref, user_id):
         super().__init__(timeout=120)
         self.author_id = author_id
-        self.jogos_ref = jogos_embaralhar_ref
+        self.jogos_ref = jogos_ref
         self.user_id = user_id
-        self._criar_teclado()
-
-    def _criar_teclado(self):
-        linhas = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"]
-        for linha_idx, linha_texto in enumerate(linhas):
-            for letra in linha_texto:
-                btn = discord.ui.Button(label=letra, style=discord.ButtonStyle.gray, row=linha_idx)
-                btn.callback = self.make_callback(letra)
-                self.add_item(btn)
-
-    def make_callback(self, letra):
-        async def callback(interaction: discord.Interaction):
-            await self.processar_letra(interaction, letra.lower())
-        return callback
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
@@ -1223,64 +1370,27 @@ class PalavraButtonView(discord.ui.View):
         for child in self.children:
             child.disabled = True
 
-    async def processar_letra(self, interaction: discord.Interaction, letra: str):
+    @discord.ui.button(label="✏️ Digitar Palavra", style=discord.ButtonStyle.green, row=3)
+    async def digitar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = PalavraModal(self.jogos_ref, self.user_id, self)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="🏳️ Desistir", style=discord.ButtonStyle.red, row=3)
+    async def desistir(self, interaction: discord.Interaction, button: discord.ui.Button):
         jogo = self.jogos_ref.get(self.user_id)
         if not jogo:
             await interaction.response.send_message("Jogo não encontrado!", ephemeral=True)
             return
         
-        if letra in jogo["tentadas"]:
-            await interaction.response.send_message(f"⚠️ Você já tentou **{letra}**!", ephemeral=True)
-            return
-        
-        jogo["tentadas"].append(letra)
-        if letra not in jogo["palavra"]:
-            jogo["erros"] += 1
-        
-        palavra_escondida = " ".join([l if l in jogo["tentadas"] else "_" for l in jogo["palavra"]])
-        letras_tentadas = ", ".join(sorted(jogo["tentadas"]))
-        
-        if "_" not in palavra_escondida:
-            embed = discord.Embed(
-                title="🎉 **VOCÊ ACERTOU!**",
-                description=f"**Palavra:** `{jogo['embaralhada']}`\n\n**Resposta:** **{jogo['palavra'].upper()}**\nTentativas: **{len(jogo['tentadas'])}**",
-                color=discord.Color.green()
-            )
-            for child in self.children:
-                child.disabled = True
-            del self.jogos_ref[self.user_id]
-            await interaction.response.edit_message(embed=embed, view=self)
-            return
-        
-        if jogo["erros"] >= 5:
-            embed = discord.Embed(
-                title="😢 **VOCÊ PERDEU!**",
-                description=f"**Palavra:** `{jogo['embaralhada']}`\n\n**Resposta:** **{jogo['palavra'].upper()}**\nTentativas: {len(jogo['tentadas'])}",
-                color=discord.Color.red()
-            )
-            for child in self.children:
-                child.disabled = True
-            del self.jogos_ref[self.user_id]
-            await interaction.response.edit_message(embed=embed, view=self)
-            return
-        
-        if letra in jogo["palavra"]:
-            msg_letra = f"✅ **{letra.upper()}** está na palavra!"
-        else:
-            msg_letra = f"❌ **{letra.upper()}** não está na palavra!"
-        
-        cor = discord.Color.blue() if jogo["erros"] < 3 else discord.Color.orange() if jogo["erros"] < 5 else discord.Color.red()
         embed = discord.Embed(
-            title="📝 Palavra Embaralhada",
-            description=f"**Palavra:** `{jogo['embaralhada']}`\n\n"
-                        f"{msg_letra}\n\n"
-                        f"`{palavra_escondida}`\n\n"
-                        f"📏 **{len(jogo['palavra'])} letras**\n"
-                        f"Letras tentadas: {letras_tentadas}\n"
-                        f"Erros: **{jogo['erros']}/5**",
-            color=cor
+            title="🏳️ Você desistiu!",
+            description=f"A palavra era: **{jogo['palavra'].upper()}**",
+            color=discord.Color.light_grey()
         )
-        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+        for child in self.children:
+            child.disabled = True
+        if self.user_id in self.jogos_ref:
+            del self.jogos_ref[self.user_id]
         await interaction.response.edit_message(embed=embed, view=self)
 
 @bot.tree.command(name="embaralhar", description="📝 Adivinhe a palavra embaralhada!")
@@ -1313,8 +1423,7 @@ async def slash_embaralhar(interaction: discord.Interaction):
     jogos_embaralhar[user_id] = {
         "palavra": palavra,
         "embaralhada": embaralhada,
-        "tentadas": [],
-        "erros": 0
+        "tentativas": 0
     }
     
     dica = "🟢 Fácil" if len(palavra) <= 5 else "🟡 Médio" if len(palavra) <= 7 else "🔴 Difícil"
@@ -1322,12 +1431,12 @@ async def slash_embaralhar(interaction: discord.Interaction):
     embed = discord.Embed(
         title="📝 Palavra Embaralhada",
         description=f"**Palavra:** `{embaralhada}`\n\n📏 **{len(palavra)} letras** | {dica}\n\n"
-                    f"Clique nas letras abaixo para tentar!",
+                    f"Clique em **Digitar Palavra** para responder!",
         color=discord.Color.purple()
     )
-    embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+    embed.set_footer(text=f"Jogador: {interaction.user.display_name} | 5 tentativas")
     
-    view = PalavraButtonView(interaction.user.id, jogos_embaralhar, user_id)
+    view = EmbaralharView(interaction.user.id, jogos_embaralhar, user_id)
     await interaction.response.send_message(embed=embed, view=view)
 
 # ================ JOGO DA VELHA COM BOTÕES ================
