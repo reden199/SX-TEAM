@@ -962,7 +962,7 @@ class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
         if letra not in jogo["palavra"]:
             jogo["erros"] += 1
         
-        palavra_escondida = " ".join([l if l in jogo["tentadas"] else "_" for l in jogo["palavra"]])
+        palavra_escondida = " ".join([l.upper() if l in jogo["tentadas"] else "\\_" for l in jogo["palavra"]])
         letras_tentadas = ", ".join(sorted(jogo["tentadas"]))
         
         # Vitória
@@ -1156,7 +1156,7 @@ async def slash_forca(interaction: discord.Interaction):
         "max_erros": 6
     }
     
-    palavra_escondida = " ".join(["_" for _ in palavra])
+    palavra_escondida = " ".join(["\\_" for _ in palavra])
     
     embed = discord.Embed(
         title="🪢 Jogo da Forca",
