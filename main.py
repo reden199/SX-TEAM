@@ -923,26 +923,227 @@ async def slash_ppt(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view)
 
 # ================ FORCA ================
+# ================ FORCA COM MODAL ================
 jogos_forca = {}
+
+class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
+    def __init__(self, jogos_ref, user_id, view):
+        super().__init__()
+        self.jogos_ref = jogos_ref
+        self.user_id = user_id
+        self.view_ref = view
+    
+    letra = discord.ui.TextInput(
+        label="Digite uma letra:",
+        placeholder="Apenas uma letra...",
+        required=True,
+        min_length=1,
+        max_length=1
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        jogo = self.jogos_ref.get(self.user_id)
+        if not jogo:
+            await interaction.response.send_message("Jogo não encontrado!", ephemeral=True)
+            return
+        
+        letra = self.letra.value.lower().strip()
+        
+        if len(letra) != 1 or not letra.isalpha():
+            await interaction.response.send_message("❌ Digite apenas **uma letra**!", ephemeral=True)
+            return
+        
+        if letra in jogo["tentadas"]:
+            await interaction.response.send_message(f"⚠️ Você já tentou a letra **{letra.upper()}**!", ephemeral=True)
+            return
+        
+        jogo["tentadas"].append(letra)
+        
+        if letra not in jogo["palavra"]:
+            jogo["erros"] += 1
+        
+        palavra_escondida = " ".join([l if l in jogo["tentadas"] else "_" for l in jogo["palavra"]])
+        letras_tentadas = ", ".join(sorted(jogo["tentadas"]))
+        
+        # Vitória
+        if "_" not in palavra_escondida:
+            embed = discord.Embed(
+                title="🎉 **VOCÊ GANHOU!**",
+                description=f"A palavra era: **{jogo['palavra'].upper()}**",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Erros", value=f"{jogo['erros']}/6", inline=True)
+            embed.add_field(name="Tentativas", value=letras_tentadas, inline=False)
+            embed.add_field(name="Forca", value=desenhar_forca(jogo["erros"]), inline=False)
+            embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+            for child in self.view_ref.children:
+                child.disabled = True
+            del self.jogos_ref[self.user_id]
+            await interaction.response.edit_message(embed=embed, view=self.view_ref)
+            return
+        
+        # Derrota
+        if jogo["erros"] >= jogo["max_erros"]:
+            embed = discord.Embed(
+                title="💀 **VOCÊ PERDEU!**",
+                description=f"A palavra era: **{jogo['palavra'].upper()}**",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Forca", value=desenhar_forca(6), inline=False)
+            embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+            for child in self.view_ref.children:
+                child.disabled = True
+            del self.jogos_ref[self.user_id]
+            await interaction.response.edit_message(embed=embed, view=self.view_ref)
+            return
+        
+        # Continua
+        if letra in jogo["palavra"]:
+            msg_letra = f"✅ **{letra.upper()}** está na palavra!"
+        else:
+            msg_letra = f"❌ **{letra.upper()}** não está na palavra!"
+        
+        cor = discord.Color.blue() if jogo["erros"] < 3 else discord.Color.orange() if jogo["erros"] < 5 else discord.Color.red()
+        
+        embed = discord.Embed(
+            title="🪢 Jogo da Forca",
+            description=f"{msg_letra}\n\n**Palavra:** {palavra_escondida}\n**Letras tentadas:** {letras_tentadas}\n**Erros:** {jogo['erros']}/6",
+            color=cor
+        )
+        embed.add_field(name="Forca", value=desenhar_forca(jogo["erros"]), inline=False)
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name} | Use 'Tentar Letra' ou 'Desistir'")
+        
+        await interaction.response.edit_message(embed=embed, view=self.view_ref)
+
+class ForcaView(discord.ui.View):
+    def __init__(self, author_id, jogos_ref, user_id):
+        super().__init__(timeout=300)
+        self.author_id = author_id
+        self.jogos_ref = jogos_ref
+        self.user_id = user_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Só quem iniciou pode jogar!", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        if self.user_id in self.jogos_ref:
+            palavra = self.jogos_ref[self.user_id]["palavra"]
+            del self.jogos_ref[self.user_id]
+            for child in self.children:
+                child.disabled = True
+            if hasattr(self, 'message'):
+                embed = self.message.embeds[0]
+                embed.add_field(name="⏰ Tempo esgotado!", value=f"A palavra era: **{palavra.upper()}**", inline=False)
+                embed.color = discord.Color.light_grey()
+                await self.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="🔤 Tentar Letra", style=discord.ButtonStyle.green)
+    async def tentar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ForcaModal(self.jogos_ref, self.user_id, self)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="🏳️ Desistir", style=discord.ButtonStyle.red)
+    async def desistir(self, interaction: discord.Interaction, button: discord.ui.Button):
+        jogo = self.jogos_ref.get(self.user_id)
+        if not jogo:
+            await interaction.response.send_message("Jogo não encontrado!", ephemeral=True)
+            return
+        
+        embed = discord.Embed(
+            title="🏳️ Você desistiu!",
+            description=f"A palavra era: **{jogo['palavra'].upper()}**",
+            color=discord.Color.light_grey()
+        )
+        for child in self.children:
+            child.disabled = True
+        del self.jogos_ref[self.user_id]
+        await interaction.response.edit_message(embed=embed, view=self)
+
+def desenhar_forca(erros):
+    estagios = [
+        "```\n  +---+\n  |   |\n      |\n      |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n      |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n  |   |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|   |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n /    |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n / \\  |\n      |\n=========\n```"
+    ]
+    return estagios[min(erros, 6)]
 
 @bot.tree.command(name="forca", description="🪢 Jogo da forca - adivinhe a palavra!")
 async def slash_forca(interaction: discord.Interaction):
     palavras = [
-        "python", "discord", "bot", "servidor", "comando",
-        "jogador", "campeao", "teclado", "monitor", "programa",
-        "internet", "codigo", "variavel", "funcao", "string",
-        "numero", "lista", "dicionario", "loop", "condicao",
-        "banana", "abacaxi", "morango", "laranja", "uva",
-        "guitarra", "bateria", "violino", "piano", "flauta",
-        "brasil", "argentina", "canada", "japao", "franca",
-        "futebol", "basquete", "tenis", "natacao", "volei"
+        # Tecnologia/Programação
+        "python", "java", "ruby", "swift", "dart", "rust", "perl",
+        "html", "css", "json", "xml", "sql", "php", "node", "react",
+        "angular", "django", "flask", "docker", "git", "linux", "ubuntu",
+        "windows", "macos", "android", "kernel", "script", "query",
+        "debug", "commit", "branch", "merge", "deploy", "server",
+        "cloud", "proxy", "token", "cache", "buffer", "socket",
+        # Profissões
+        "medico", "engenheiro", "professor", "bombeiro", "policial",
+        "piloto", "chef", "mecanico", "eletricista", "encanador",
+        "arquiteto", "dentista", "farmaceutico", "biologo", "quimico",
+        "fisico", "astronomo", "geologo", "meteorologista", "veterinario",
+        "jornalista", "escritor", "pintor", "escultor", "musico",
+        "ator", "dancarino", "malabarista", "ilusionista", "palhaco",
+        "carpinteiro", "ferreiro", "alfaiate", "marceneiro", "ourives",
+        # Frutas/Comidas
+        "abacate", "ameixa", "caju", "caqui", "coco", "damasco",
+        "figo", "framboesa", "graviola", "jabuticaba", "jaca",
+        "kiwi", "lichia", "mamao", "maracuja", "melancia", "melao",
+        "mirtilo", "nectarina", "pera", "pessego", "pitaya",
+        "roma", "tamarindo", "tangerina", "toranja", "amora",
+        "cereja", "groselha", "carambola", "cupuacu", "bacuri",
+        "pizza", "lasanha", "panqueca", "omelete", "risoto",
+        "churrasco", "estrogonofe", "macarronada", "feijoada",
+        "moqueca", "empadao", "nhoque", "sushi", "hamburguer",
+        # Animais
+        "leopardo", "guepardo", "pantera", "lince", "jaguar",
+        "puma", "suricato", "esquilo", "castor", "capivara",
+        "lontra", "ariranha", "tamandua", "preguica", "tatu",
+        "golfinho", "baleia", "tubarao", "polvo", "lula",
+        "caranguejo", "lagosta", "camarao", "ostra", "molusco",
+        "pavao", "flamingo", "tucano", "arara", "aguia",
+        "falcão", "coruja", "pinguim", "avestruz", "ema",
+        "canguru", "coala", "ornitorrinco", "equidna", "diabodatasmânia",
+        # Países/Cidades
+        "brasil", "argentina", "chile", "peru", "colombia",
+        "venezuela", "equador", "uruguai", "paraguai", "bolivia",
+        "alemanha", "franca", "italia", "espanha", "portugal",
+        "inglaterra", "irlanda", "escocia", "holanda", "belgica",
+        "suecia", "noruega", "dinamarca", "finlandia", "islandia",
+        "japao", "china", "coreia", "tailandia", "vietna",
+        "egito", "marrocos", "nigeria", "angola", "mocambique",
+        "paris", "londres", "toquio", "sidney", "moscou",
+        # Esportes/Jogos
+        "futebol", "basquete", "tenis", "volei", "natacao",
+        "atletismo", "ginastica", "judô", "karatê", "boxe",
+        "esgrima", "hipismo", "ciclismo", "surfe", "skate",
+        "xadrez", "domino", "poquer", "truco", "buraco",
+        # Objetos
+        "geladeira", "fogao", "microondas", "torradeira", "batedeira",
+        "aspirador", "ferro", "secador", "liquidificador", "espremedor",
+        "cadeira", "poltrona", "sofa", "cama", "colchao",
+        "guarda-roupa", "comoda", "estante", "prateleira", "armario",
+        "televisao", "telefone", "tablet", "notebook", "impressora",
+        "caneta", "lapis", "borracha", "caderno", "mochila",
+        # Natureza
+        "montanha", "planicie", "deserto", "floresta", "pantano",
+        "oceano", "lagoa", "cachoeira", "nascente", "geleira",
+        "vulcao", "terremoto", "tsunami", "furacao", "tornado",
+        "relampago", "trovao", "chuva", "granizo", "nevasca"
     ]
-    
+        
     user_id = interaction.user.id
     
     if user_id in jogos_forca:
         await interaction.response.send_message(
-            "❌ Você já tem um jogo em andamento! Use `/tentar` para continuar ou `/desistir` para sair.",
+            "❌ Você já tem um jogo em andamento!",
             ephemeral=True
         )
         return
@@ -959,120 +1160,19 @@ async def slash_forca(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="🪢 Jogo da Forca",
-        description=f"**Palavra:** {palavra_escondida}\n**Letras tentadas:** Nenhuma\n**Erros:** 0/6",
+        description=f"**Palavra:** {palavra_escondida}\n\n**Letras tentadas:** Nenhuma\n**Erros:** 0/6",
         color=discord.Color.blue()
     )
+    embed.add_field(name="Forca", value=desenhar_forca(0), inline=False)
     embed.add_field(
         name="Como jogar",
-        value="Use `/tentar <letra>` para chutar uma letra\nUse `/desistir` para sair do jogo",
+        value="Clique em **🔤 Tentar Letra** para chutar uma letra\nClique em **🏳️ Desistir** para sair",
         inline=False
     )
-    embed.add_field(name="Forca", value=desenhar_forca(0), inline=False)
     embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
     
-    await interaction.response.send_message(embed=embed)
-
-def desenhar_forca(erros):
-    estagios = [
-        "```\n  +---+\n  |   |\n      |\n      |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n      |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n  |   |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n /|   |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n /    |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n / \\  |\n      |\n=========\n```"
-    ]
-    return estagios[min(erros, 6)]
-
-@bot.tree.command(name="tentar", description="Tenta uma letra no jogo da forca")
-@app_commands.describe(letra="Letra que você quer tentar")
-async def slash_tentar(interaction: discord.Interaction, letra: str):
-    user_id = interaction.user.id
-    
-    if user_id not in jogos_forca:
-        await interaction.response.send_message(
-            "❌ Você não tem um jogo em andamento! Use `/forca` para começar.",
-            ephemeral=True
-        )
-        return
-    
-    letra = letra.lower().strip()
-    
-    if len(letra) != 1 or not letra.isalpha():
-        await interaction.response.send_message("❌ Digite apenas **uma letra**!", ephemeral=True)
-        return
-    
-    jogo = jogos_forca[user_id]
-    
-    if letra in jogo["tentadas"]:
-        await interaction.response.send_message(f"⚠️ Você já tentou a letra **{letra}**!", ephemeral=True)
-        return
-    
-    jogo["tentadas"].append(letra)
-    
-    if letra not in jogo["palavra"]:
-        jogo["erros"] += 1
-    
-    palavra_escondida = " ".join([l if l in jogo["tentadas"] else "_" for l in jogo["palavra"]])
-    letras_tentadas = ", ".join(sorted(jogo["tentadas"]))
-    
-    if "_" not in palavra_escondida:
-        embed = discord.Embed(
-            title="🎉 **VOCÊ GANHOU!**",
-            description=f"A palavra era: **{jogo['palavra'].upper()}**",
-            color=discord.Color.green()
-        )
-        embed.add_field(name="Erros", value=f"{jogo['erros']}/6", inline=True)
-        embed.add_field(name="Tentativas", value=letras_tentadas, inline=False)
-        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
-        del jogos_forca[user_id]
-        await interaction.response.send_message(embed=embed)
-        return
-    
-    if jogo["erros"] >= jogo["max_erros"]:
-        embed = discord.Embed(
-            title="💀 **VOCÊ PERDEU!**",
-            description=f"A palavra era: **{jogo['palavra'].upper()}**",
-            color=discord.Color.red()
-        )
-        embed.add_field(name="Forca", value=desenhar_forca(6), inline=False)
-        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
-        del jogos_forca[user_id]
-        await interaction.response.send_message(embed=embed)
-        return
-    
-    if letra in jogo["palavra"]:
-        mensagem = f"✅ Boa! A letra **{letra}** está na palavra!"
-    else:
-        mensagem = f"❌ A letra **{letra}** não está na palavra!"
-    
-    embed = discord.Embed(
-        title="🪢 Jogo da Forca",
-        description=f"{mensagem}\n\n**Palavra:** {palavra_escondida}\n**Letras tentadas:** {letras_tentadas}\n**Erros:** {jogo['erros']}/6",
-        color=discord.Color.blue() if jogo["erros"] < 4 else discord.Color.orange() if jogo["erros"] < 6 else discord.Color.red()
-    )
-    embed.add_field(name="Forca", value=desenhar_forca(jogo["erros"]), inline=False)
-    embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
-    
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="desistir", description="Desiste do jogo da forca atual")
-async def slash_desistir(interaction: discord.Interaction):
-    user_id = interaction.user.id
-    
-    if user_id not in jogos_forca:
-        await interaction.response.send_message("❌ Você não tem um jogo em andamento!", ephemeral=True)
-        return
-    
-    palavra = jogos_forca[user_id]["palavra"]
-    del jogos_forca[user_id]
-    
-    embed = discord.Embed(
-        title="🏳️ Você desistiu!",
-        description=f"A palavra era: **{palavra.upper()}**",
-        color=discord.Color.light_grey()
-    )
-    await interaction.response.send_message(embed=embed)
+    view = ForcaView(interaction.user.id, jogos_forca, user_id)
+    await interaction.response.send_message(embed=embed, view=view)
 
 # ================ CARA OU COROA COM BOTÕES ================
 class CaraCoroaView(discord.ui.View):
@@ -1396,14 +1496,59 @@ class EmbaralharView(discord.ui.View):
 @bot.tree.command(name="embaralhar", description="📝 Adivinhe a palavra embaralhada!")
 async def slash_embaralhar(interaction: discord.Interaction):
     palavras = [
-        "amor", "paz", "luz", "sol", "ceu", "mar", "flor", "vida",
-        "casa", "rato", "gato", "bola", "jogo", "fogo", "ouro",
-        "porta", "mesa", "livro", "tempo", "noite", "agua", "feliz",
-        "amizade", "cachorro", "guitarra", "abacaxi", "morango",
-        "estrela", "dinheiro", "coragem", "fantasma", "girassol",
-        "tesouro", "vampiro", "zumbi", "quebra", "floresta",
-        "biblioteca", "tecnologia", "borboleta", "criatividade",
-        "inteligente", "maravilhoso", "paralelepipedo"
+        # Sentimentos/Emoções
+        "alegria", "tristeza", "raiva", "medo", "nojo",
+        "surpresa", "calma", "ansiedade", "esperanca", "saudade",
+        "ciume", "orgulho", "vergonha", "culpa", "gratidao",
+        "empatia", "compaixao", "ternura", "paixao", "decepcao",
+        "nostalgia", "euforia", "melancolia", "entusiasmo", "serenidade",
+        # Corpo humano
+        "cabeca", "ombro", "joelho", "tornozelo", "pulso",
+        "cotovelo", "quadril", "cintura", "abdômen", "torax",
+        "cranio", "clavicula", "escapula", "esterno", "vertebra",
+        "femur", "tibia", "fibula", "patela", "umero",
+        "cerebro", "coração", "pulmao", "figado", "rim",
+        "estomago", "intestino", "pancreas", "baco", "vesicula",
+        # Adjetivos/Características
+        "bonito", "inteligente", "rapido", "devagar", "forte",
+        "fraco", "corajoso", "covarde", "generoso", "egoista",
+        "honesto", "mentiroso", "leal", "traidor", "humilde",
+        "arrogante", "paciente", "impaciente", "criativo", "monotono",
+        "elegante", "desajeitado", "simpatico", "antipatico", "carismatico",
+        # Ações/Verbos
+        "caminhar", "correr", "nadar", "voar", "saltar",
+        "dancar", "cantar", "gritar", "sussurrar", "chorar",
+        "sorrir", "abraçar", "beijar", "acariciar", "empurrar",
+        "puxar", "levantar", "abaixar", "girar", "inclinar",
+        "cozinhar", "costurar", "pintar", "desenhar", "esculpir",
+        "construir", "destruir", "plantar", "colher", "regar",
+        # Lugares/Ambientes
+        "hospital", "escola", "igreja", "biblioteca", "cinema",
+        "teatro", "estadio", "gimnasio", "piscina", "parque",
+        "shopping", "mercado", "feira", "padaria", "acougue",
+        "farmacia", "correio", "banco", "hotel", "restaurante",
+        "aeroporto", "rodoviaria", "porto", "estacao", "terminal",
+        "escritorio", "fabrica", "oficina", "laboratorio", "atelie",
+        # Ciência/Conhecimento
+        "astronomia", "biologia", "quimica", "fisica", "matematica",
+        "historia", "geografia", "filosofia", "sociologia", "psicologia",
+        "antropologia", "arqueologia", "paleontologia", "oceanografia", "meteorologia",
+        "algebra", "geometria", "trigonometria", "estatistica", "calculo",
+        "gravidade", "magnetismo", "eletricidade", "atomo", "molecula",
+        "celula", "bacteria", "virus", "fungo", "parasita",
+        # Música/Arte
+        "violao", "piano", "flauta", "bateria", "trompete",
+        "saxofone", "clarinete", "violino", "violoncelo", "harpa",
+        "partitura", "melodia", "harmonia", "ritmo", "sinfonia",
+        "orquestra", "concerto", "recital", "musical", "cantata",
+        "aquarela", "escultura", "ceramica", "mosaico", "vitral",
+        # Mitologia/Fantasia
+        "dragao", "unicornio", "sereia", "centauro", "minotauro",
+        "grifo", "fenix", "quimera", "hidra", "troll",
+        "duende", "gnomo", "elfo", "ogro", "gigante",
+        "feiticeiro", "bruxa", "mago", "druida", "necromante",
+        "espada", "escudo", "armadura", "pocao", "cristal",
+        "vulcao", "terremoto", "tsunami", "eclipse", "cometa"
     ]
     
     user_id = interaction.user.id
@@ -1627,6 +1772,138 @@ async def slash_velha(interaction: discord.Interaction, adversario: discord.Memb
     
     view = VelhaView(jogo_id, jogos_velha)
     await interaction.response.send_message(embed=embed, view=view)
+
+@bot.tree.command(name="ship", description="💕 Calcula a compatibilidade entre duas pessoas")
+@app_commands.describe(
+    pessoa1="Primeira pessoa",
+    pessoa2="Segunda pessoa"
+)
+async def slash_ship(interaction: discord.Interaction, pessoa1: str, pessoa2: str):
+    import random
+    
+    # Gera uma porcentagem "baseada" nos nomes para ser consistente
+    seed = pessoa1.lower() + pessoa2.lower()
+    random.seed(seed)
+    porcentagem = random.randint(1, 100)
+    random.seed()  # Reseta o seed
+    
+    # Barra de progresso
+    barras = int(porcentagem / 10)
+    barra = "[" + "❤️" * barras + "🖤" * (10 - barras) + "]"
+    
+    # Mensagem baseada na porcentagem
+    if porcentagem >= 90:
+        mensagem = "💞 **Almas gêmeas!** Casamento perfeito!"
+        cor = discord.Color.red()
+    elif porcentagem >= 70:
+        mensagem = "💖 **Combinação ótima!** Têm tudo pra dar certo!"
+        cor = discord.Color.purple()
+    elif porcentagem >= 50:
+        mensagem = "💛 **Boa combinação!** Pode render algo bom!"
+        cor = discord.Color.gold()
+    elif porcentagem >= 30:
+        mensagem = "💔 **Complicado...** Talvez como amigos?"
+        cor = discord.Color.orange()
+    else:
+        mensagem = "💀 **Desastre total!** Melhor manter distância!"
+        cor = discord.Color.dark_gray()
+    
+    embed = discord.Embed(
+        title="💕 Calculadora do Amor",
+        description=f"**{pessoa1}** + **{pessoa2}**\n\n"
+                    f"## {porcentagem}%\n{barra}\n\n{mensagem}",
+        color=cor
+    )
+    embed.set_footer(text=f"Solicitado por {interaction.user.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="saycanal", description="📢 Faz o bot enviar uma mensagem em um canal específico (apenas ADMs)")
+@app_commands.describe(
+    canal="Canal onde a mensagem será enviada",
+    mensagem="Texto que o bot vai falar"
+)
+@app_commands.default_permissions(administrator=True)
+async def slash_saycanal(interaction: discord.Interaction, canal: discord.TextChannel, mensagem: str):
+    # Verifica se o bot tem permissão no canal
+    if not canal.permissions_for(interaction.guild.me).send_messages:
+        await interaction.response.send_message(
+            f"❌ Não tenho permissão para enviar mensagens em {canal.mention}!",
+            ephemeral=True
+        )
+        return
+    
+    # Envia a mensagem no canal escolhido
+    try:
+        await canal.send(mensagem)
+        await interaction.response.send_message(
+            f"✅ Mensagem enviada em {canal.mention}!",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ Erro ao enviar mensagem: {e}",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="role", description="🏷️ Adiciona ou remove um cargo de um usuário (apenas ADMs)")
+@app_commands.describe(
+    membro="Usuário que vai receber/perder o cargo",
+    cargo="Cargo a ser adicionado ou removido"
+)
+@app_commands.default_permissions(manage_roles=True)
+async def slash_role(interaction: discord.Interaction, membro: discord.Member, cargo: discord.Role):
+    # Verifica se o bot pode gerenciar o cargo
+    if cargo >= interaction.guild.me.top_role:
+        await interaction.response.send_message(
+            "❌ Não posso gerenciar esse cargo! Ele está acima do meu cargo mais alto.",
+            ephemeral=True
+        )
+        return
+    
+    # Verifica se o ADM pode gerenciar o cargo
+    if cargo >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        await interaction.response.send_message(
+            "❌ Você não pode gerenciar esse cargo! Está acima ou igual ao seu cargo mais alto.",
+            ephemeral=True
+        )
+        return
+    
+    # Verifica se o usuário já tem o cargo
+    if cargo in membro.roles:
+        # Remove o cargo
+        try:
+            await membro.remove_roles(cargo, reason=f"Removido por {interaction.user.display_name}")
+            
+            embed = discord.Embed(
+                title="✅ Cargo Removido",
+                description=f"O cargo {cargo.mention} foi **removido** de {membro.mention}.",
+                color=discord.Color.red()
+            )
+            embed.set_footer(text=f"Por: {interaction.user.display_name}")
+            await interaction.response.send_message(embed=embed)
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Erro ao remover cargo: {e}",
+                ephemeral=True
+            )
+    else:
+        # Adiciona o cargo
+        try:
+            await membro.add_roles(cargo, reason=f"Adicionado por {interaction.user.display_name}")
+            
+            embed = discord.Embed(
+                title="✅ Cargo Adicionado",
+                description=f"O cargo {cargo.mention} foi **adicionado** a {membro.mention}.",
+                color=discord.Color.green()
+            )
+            embed.set_footer(text=f"Por: {interaction.user.display_name}")
+            await interaction.response.send_message(embed=embed)
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Erro ao adicionar cargo: {e}",
+                ephemeral=True
+            )
 
 # ================ MODERAÇÃO ================
 @bot.tree.command(name="unban", description="Desbane um usuário pelo nome ou nome#tag")
