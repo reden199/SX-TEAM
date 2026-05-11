@@ -177,6 +177,8 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"Slash commands sincronizados: {len(synced)} comandos")
+        for cmd in synced:
+            print(f"  - /{cmd.name}")  # Lista todos os comandos no console
     except Exception as e:
         print(f"Erro ao sincronizar comandos: {e}")
 
