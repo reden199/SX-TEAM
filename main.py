@@ -297,7 +297,7 @@ def extrair_emoji_do_nome(nome_canal):
         "\u274E\u2753-\u2755\u2757\u2763\u2764\u2795-\u2797\u27A1\u27B0"
         "\u27BF\u2934\u2935\u2B05-\u2B07\u2B1B\u2B1C\u2B50\u2B55\u3030"
         "\u303D\u3297\u3299]|"
-        "<a?:\w+:\d+>"  # Emoji personalizado do Discord
+        r"<a?:\w+:\d+>"  # Emoji personalizado do Discord
         , flags=re.UNICODE
     )
     
