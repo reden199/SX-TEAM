@@ -348,53 +348,76 @@ def extrair_texto_puro(nome_canal):
 
 def extrair_emojis(texto):
     """Extrai emojis do texto, suportando emojis Unicode e personalizados do Discord"""
+    import re
+    
     # Emojis personalizados do Discord
     custom_emoji_pattern = re.compile(r'<a?:\w+:\d+>')
     custom_emojis = custom_emoji_pattern.findall(texto)
+    
+    # Remove os emojis personalizados do texto
     texto_sem_custom = custom_emoji_pattern.sub('', texto)
     
-    # Emojis Unicode
-    emoji_pattern = re.compile(
-        "[" 
-        "\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
-        "\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251"
-        "\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF"
-        "\U00002600-\U000026FF\U00002700-\U000027BF\U0001F780-\U0001F7FF"
-        "\U00002B50\U00002764\U0000203C\U00002049\U000020E3\U0001F004"
-        "\U0001F0CF\u23F0\u23F3\u2600-\u27BF\u2B50\u2B55\u231A\u231B"
-        "\u2328\u23CF\u23E9-\u23F3\u23F8-\u23FA\u24C2\u25AA\u25AB"
-        "\u25B6\u25C0\u25FB-\u25FE\u2600-\u2B55\u2702\u2705\u2708-\u270D"
-        "\u270F\u2712\u2714\u2716\u271D\u2721\u2728\u2733\u2734\u2744"
-        "\u2747\u274C\u274E\u2753-\u2755\u2757\u2763\u2764\u2795-\u2797"
-        "\u27A1\u27B0\u27BF\u2934\u2935\u2B05-\u2B07\u2B1B\u2B1C\u2B50"
-        "\u2B55\u3030\u303D\u3297\u3299]",
-        flags=re.UNICODE
-    )
-    
-    unicode_emojis = emoji_pattern.findall(texto_sem_custom)
-    
-    # Combina todos na ordem
+    # Lista para armazenar os emojis encontrados na ordem
     todos_emojis = []
+    
+    # Primeiro, adiciona os emojis personalizados (eles têm formato específico, fácil de identificar)
     for emoji in custom_emojis:
         idx = texto.find(emoji)
         if idx != -1:
             todos_emojis.append((idx, emoji))
     
-    for emoji in unicode_emojis:
-        idx = texto.find(emoji)
-        if idx != -1:
+    # Agora procura por emojis Unicode no texto restante
+    # Percorre o texto caractere por caractere para pegar emojis na ordem correta
+    i = 0
+    while i < len(texto_sem_custom):
+        char = texto_sem_custom[i]
+        
+        # Verifica se é um emoji Unicode (simplificado: verifica se está fora do ASCII básico)
+        if ord(char) > 127:
+            # Pega o emoji completo (pode ser múltiplos caracteres)
+            emoji_inicio = i
+            
+            # Avança enquanto for parte do emoji (caracteres Unicode, modificadores, ZWJ, etc)
+            while i < len(texto_sem_custom) and (
+                ord(texto_sem_custom[i]) > 127 or 
+                texto_sem_custom[i] in ['\u200D', '\uFE0F', '\u20E3'] or  # ZWJ, variação, keycap
+                (0x1F3FB <= ord(texto_sem_custom[i]) <= 0x1F3FF)  # skin tones
+            ):
+                i += 1
+                # Se for ZWJ, inclui o próximo caractere também
+                if i > 0 and i-1 < len(texto_sem_custom) and texto_sem_custom[i-1] == '\u200D' and i < len(texto_sem_custom):
+                    i += 1
+            
+            emoji_encontrado = texto_sem_custom[emoji_inicio:i]
+            
+            # Verifica se não é parte de um emoji personalizado
             is_in_custom = False
             for custom_emoji in custom_emojis:
                 custom_idx = texto.find(custom_emoji)
-                if custom_idx != -1 and custom_idx <= idx < custom_idx + len(custom_emoji):
+                if custom_idx != -1 and custom_idx <= texto.find(emoji_encontrado) < custom_idx + len(custom_emoji):
                     is_in_custom = True
                     break
+            
             if not is_in_custom:
-                todos_emojis.append((idx, emoji))
+                # Encontra a posição no texto original
+                pos_no_original = texto.find(emoji_encontrado)
+                if pos_no_original != -1:
+                    todos_emojis.append((pos_no_original, emoji_encontrado))
+        else:
+            i += 1
     
-    todos_emojis.sort()
-    return [emoji for _, emoji in todos_emojis]
-
+    # Ordena por posição no texto original
+    todos_emojis.sort(key=lambda x: x[0])
+    
+    # Remove duplicatas (mesma posição)
+    emojis_final = []
+    posicoes_vistas = set()
+    for pos, emoji in todos_emojis:
+        if pos not in posicoes_vistas:
+            emojis_final.append(emoji)
+            posicoes_vistas.add(pos)
+    
+    return emojis_final
 
 # ================ COMANDO /CRIAR ================
 @bot.tree.command(name="criar", description="Cria canais com emoji e decoração (apenas ADMs)")
