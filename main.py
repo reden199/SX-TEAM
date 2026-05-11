@@ -4,6 +4,7 @@ import discord
 import datetime
 import traceback
 import httpx
+import random
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask
@@ -900,6 +901,690 @@ async def prefix_criar(ctx, *, args: str = None):
     
     embed.set_footer(text=f"Criado por {ctx.author.display_name}")
     await ctx.send(embed=embed)
+
+@bot.tree.command(name="ppt", description="🪨📄✂️ Joga Pedra, Papel e Tesoura contra o bot")
+@app_commands.describe(escolha="Sua escolha")
+@app_commands.choices(escolha=[
+    app_commands.Choice(name="🪨 Pedra", value="pedra"),
+    app_commands.Choice(name="📄 Papel", value="papel"),
+    app_commands.Choice(name="✂️ Tesoura", value="tesoura")
+])
+async def slash_ppt(interaction: discord.Interaction, escolha: str):
+    
+    opcoes = ["pedra", "papel", "tesoura"]
+    emojis = {"pedra": "🪨", "papel": "📄", "tesoura": "✂️"}
+    
+    bot_escolha = random.choice(opcoes)
+    
+    # Quem ganha
+    if escolha == bot_escolha:
+        resultado = "🤝 **Empate!**"
+        cor = discord.Color.greyple()
+    elif (escolha == "pedra" and bot_escolha == "tesoura") or \
+         (escolha == "papel" and bot_escolha == "pedra") or \
+         (escolha == "tesoura" and bot_escolha == "papel"):
+        resultado = "🎉 **Você ganhou!**"
+        cor = discord.Color.green()
+    else:
+        resultado = "😢 **Você perdeu!**"
+        cor = discord.Color.red()
+    
+    embed = discord.Embed(title="🪨 Pedra | 📄 Papel | ✂️ Tesoura", color=cor)
+    embed.add_field(name="Você escolheu", value=f"{emojis[escolha]} {escolha.capitalize()}", inline=True)
+    embed.add_field(name="Bot escolheu", value=f"{emojis[bot_escolha]} {bot_escolha.capitalize()}", inline=True)
+    embed.add_field(name="Resultado", value=resultado, inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+
+# Dicionário para armazenar jogos ativos (fora dos comandos)
+jogos_forca = {}
+
+@bot.tree.command(name="forca", description="🪢 Jogo da forca - adivinhe a palavra!")
+async def slash_forca(interaction: discord.Interaction):
+    palavras = [
+        "python", "discord", "bot", "servidor", "comando",
+        "jogador", "campeao", "teclado", "monitor", "programa",
+        "internet", "codigo", "variavel", "funcao", "string",
+        "numero", "lista", "dicionario", "loop", "condicao",
+        "banana", "abacaxi", "morango", "laranja", "uva",
+        "guitarra", "bateria", "violino", "piano", "flauta",
+        "brasil", "argentina", "canada", "japao", "franca",
+        "futebol", "basquete", "tenis", "natacao", "volei"
+    ]
+    
+    user_id = interaction.user.id
+    
+    if user_id in jogos_forca:
+        await interaction.response.send_message(
+            "❌ Você já tem um jogo em andamento! Use `/tentar` para continuar ou `/desistir` para sair.",
+            ephemeral=True
+        )
+        return
+    
+    palavra = random.choice(palavras)
+    jogos_forca[user_id] = {
+        "palavra": palavra,
+        "tentadas": [],
+        "erros": 0,
+        "max_erros": 6
+    }
+    
+    palavra_escondida = " ".join(["_" for _ in palavra])
+    
+    embed = discord.Embed(
+        title="🪢 Jogo da Forca",
+        description=f"**Palavra:** {palavra_escondida}\n**Letras tentadas:** Nenhuma\n**Erros:** 0/6",
+        color=discord.Color.blue()
+    )
+    embed.add_field(
+        name="Como jogar",
+        value="Use `/tentar <letra>` para chutar uma letra\nUse `/desistir` para sair do jogo",
+        inline=False
+    )
+    embed.add_field(name="Forca", value=desenhar_forca(0), inline=False)
+    embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
+
+def desenhar_forca(erros):
+    estagios = [
+        "```\n  +---+\n  |   |\n      |\n      |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n      |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n  |   |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|   |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n /    |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n / \\  |\n      |\n=========\n```"
+    ]
+    return estagios[min(erros, 6)]
+
+@bot.tree.command(name="tentar", description="Tenta uma letra no jogo da forca")
+@app_commands.describe(letra="Letra que você quer tentar")
+async def slash_tentar(interaction: discord.Interaction, letra: str):
+    user_id = interaction.user.id
+    
+    if user_id not in jogos_forca:
+        await interaction.response.send_message(
+            "❌ Você não tem um jogo em andamento! Use `/forca` para começar.",
+            ephemeral=True
+        )
+        return
+    
+    letra = letra.lower().strip()
+    
+    if len(letra) != 1 or not letra.isalpha():
+        await interaction.response.send_message("❌ Digite apenas **uma letra**!", ephemeral=True)
+        return
+    
+    jogo = jogos_forca[user_id]
+    
+    if letra in jogo["tentadas"]:
+        await interaction.response.send_message(f"⚠️ Você já tentou a letra **{letra}**!", ephemeral=True)
+        return
+    
+    jogo["tentadas"].append(letra)
+    
+    if letra not in jogo["palavra"]:
+        jogo["erros"] += 1
+    
+    # Monta a palavra escondida
+    palavra_escondida = " ".join([l if l in jogo["tentadas"] else "_" for l in jogo["palavra"]])
+    letras_tentadas = ", ".join(sorted(jogo["tentadas"]))
+    
+    # Verifica se ganhou
+    if "_" not in palavra_escondida:
+        embed = discord.Embed(
+            title="🎉 **VOCÊ GANHOU!**",
+            description=f"A palavra era: **{jogo['palavra'].upper()}**",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Erros", value=f"{jogo['erros']}/6", inline=True)
+        embed.add_field(name="Tentativas", value=letras_tentadas, inline=False)
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+        del jogos_forca[user_id]
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    # Verifica se perdeu
+    if jogo["erros"] >= jogo["max_erros"]:
+        embed = discord.Embed(
+            title="💀 **VOCÊ PERDEU!**",
+            description=f"A palavra era: **{jogo['palavra'].upper()}**",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Forca", value=desenhar_forca(6), inline=False)
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+        del jogos_forca[user_id]
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    # Continua o jogo
+    if letra in jogo["palavra"]:
+        mensagem = f"✅ Boa! A letra **{letra}** está na palavra!"
+    else:
+        mensagem = f"❌ A letra **{letra}** não está na palavra!"
+    
+    embed = discord.Embed(
+        title="🪢 Jogo da Forca",
+        description=f"{mensagem}\n\n**Palavra:** {palavra_escondida}\n**Letras tentadas:** {letras_tentadas}\n**Erros:** {jogo['erros']}/6",
+        color=discord.Color.blue() if jogo["erros"] < 4 else discord.Color.orange() if jogo["erros"] < 6 else discord.Color.red()
+    )
+    embed.add_field(name="Forca", value=desenhar_forca(jogo["erros"]), inline=False)
+    embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="desistir", description="Desiste do jogo da forca atual")
+async def slash_desistir(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    
+    if user_id not in jogos_forca:
+        await interaction.response.send_message("❌ Você não tem um jogo em andamento!", ephemeral=True)
+        return
+    
+    palavra = jogos_forca[user_id]["palavra"]
+    del jogos_forca[user_id]
+    
+    embed = discord.Embed(
+        title="🏳️ Você desistiu!",
+        description=f"A palavra era: **{palavra.upper()}**",
+        color=discord.Color.light_grey()
+    )
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="caracoroa", description="🪙 Joga Cara ou Coroa")
+@app_commands.describe(escolha="Sua aposta (opcional - se não escolher, o bot só mostra o resultado)")
+@app_commands.choices(escolha=[
+    app_commands.Choice(name="👤 Cara", value="cara"),
+    app_commands.Choice(name="🦅 Coroa", value="coroa")
+])
+async def slash_caracoroa(interaction: discord.Interaction, escolha: str = None):
+    import random
+    
+    resultado = random.choice(["cara", "coroa"])
+    emoji_resultado = "👤" if resultado == "cara" else "🦅"
+    
+    if escolha:
+        if escolha == resultado:
+            mensagem = f"🎉 **Você acertou!** Deu **{emoji_resultado} {resultado.upper()}**!"
+            cor = discord.Color.green()
+            xp_bonus = 5
+            
+            # Bônus de XP por acertar (opcional)
+            await increment_count(interaction.guild.id, interaction.user.id)
+            await increment_count(interaction.guild.id, interaction.user.id)
+            await increment_count(interaction.guild.id, interaction.user.id)
+            await increment_count(interaction.guild.id, interaction.user.id)
+            await increment_count(interaction.guild.id, interaction.user.id)
+            
+            mensagem += f"\n🌟 Você ganhou **+{xp_bonus} mensagens** de XP!"
+        else:
+            mensagem = f"😢 **Você errou!** Deu **{emoji_resultado} {resultado.upper()}**!"
+            cor = discord.Color.red()
+    else:
+        mensagem = f"🪙 Deu **{emoji_resultado} {resultado.upper()}**!"
+        cor = discord.Color.gold()
+    
+    embed = discord.Embed(
+        title="🪙 Cara ou Coroa",
+        description=mensagem,
+        color=cor
+    )
+    
+    if escolha:
+        embed.add_field(name="Sua aposta", value=f"{'👤' if escolha == 'cara' else '🦅'} {escolha.upper()}", inline=True)
+        embed.add_field(name="Resultado", value=f"{emoji_resultado} {resultado.upper()}", inline=True)
+    
+    embed.set_footer(text=f"Jogado por {interaction.user.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="dado", description="🎲 Rola um dado com o número de lados que você escolher")
+@app_commands.describe(lados="Número de lados do dado (padrão: 6)")
+async def slash_dado(interaction: discord.Interaction, lados: int = 6):
+    if lados < 2:
+        await interaction.response.send_message("❌ O dado precisa ter pelo menos 2 lados!", ephemeral=True)
+        return
+    if lados > 1000:
+        await interaction.response.send_message("❌ Máximo de 1000 lados!", ephemeral=True)
+        return
+    
+    resultado = random.randint(1, lados)
+    
+    # Emojis especiais para alguns dados comuns
+    dados_especiais = {6: "🎲", 20: "🎯", 10: "🔟", 100: "💯"}
+    emoji_dado = dados_especiais.get(lados, "🎲")
+    
+    embed = discord.Embed(
+        title=f"{emoji_dado} D{lados}",
+        description=f"## {resultado}",
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"Rolado por {interaction.user.display_name} | 1-{lados}")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="slot", description="🎰 Joga na máquina caça-níquel")
+async def slash_slot(interaction: discord.Interaction):
+    emojis_slot = ["🍒", "🍋", "🍊", "🍇", "💎", "7️⃣", "🌟", "🔔"]
+    
+    # Gira 3 colunas
+    col1 = random.choice(emojis_slot)
+    col2 = random.choice(emojis_slot)
+    col3 = random.choice(emojis_slot)
+    
+    resultado = f"{col1} | {col2} | {col3}"
+    
+    # Verifica premiação
+    if col1 == col2 == col3:
+        if col1 == "7️⃣":
+            mensagem = "🎰 **JACKPOT!!!** 3x 7️⃣! Que sorte incrível!"
+            cor = discord.Color.gold()
+            xp_bonus = 30
+        elif col1 == "💎":
+            mensagem = "💎 **Diamantes!** Que luxo!"
+            cor = discord.Color.blue()
+            xp_bonus = 20
+        else:
+            mensagem = f"🎉 **TRÊS IGUAIS!** Muito bem!"
+            cor = discord.Color.green()
+            xp_bonus = 15
+    elif col1 == col2 or col2 == col3 or col1 == col3:
+        if "7️⃣" in [col1, col2, col3] or "💎" in [col1, col2, col3]:
+            mensagem = "👍 **Dupla com símbolo raro!** Quase lá!"
+            cor = discord.Color.orange()
+            xp_bonus = 10
+        else:
+            mensagem = "👍 **Dois iguais!** Passou perto!"
+            cor = discord.Color.orange()
+            xp_bonus = 5
+    else:
+        mensagem = "😢 **Nada dessa vez...** Tente novamente!"
+        cor = discord.Color.red()
+        xp_bonus = 0
+    
+    # Bônus de XP
+    if xp_bonus > 0:
+        for _ in range(xp_bonus):
+            await increment_count(interaction.guild.id, interaction.user.id)
+        mensagem += f"\n🌟 Você ganhou **+{xp_bonus} mensagens** de XP!"
+    
+    embed = discord.Embed(
+        title="🎰 Caça-Níquel",
+        description=f"# {resultado}\n{mensagem}",
+        color=cor
+    )
+    embed.set_footer(text=f"Jogado por {interaction.user.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
+
+# Dicionário para armazenar jogos de palavra embaralhada
+jogos_embaralhar = {}
+
+@bot.tree.command(name="embaralhar", description="📝 Adivinhe a palavra embaralhada!")
+async def slash_embaralhar(interaction: discord.Interaction):
+    palavras = [
+        # Fáceis (4-5 letras)
+        "amor", "paz", "luz", "sol", "ceu", "mar", "flor", "vida",
+        "casa", "rato", "gato", "bola", "jogo", "fogo", "ouro",
+        "porta", "mesa", "livro", "tempo", "noite", "agua", "feliz",
+        # Médias (6-7 letras)
+        "amizade", "cachorro", "guitarra", "abacaxi", "morango",
+        "estrela", "dinheiro", "coragem", "fantasma", "girassol",
+        "tesouro", "vampiro", "zumbi", "quebra", "floresta",
+        # Difíceis (8+ letras)
+        "biblioteca", "tecnologia", "borboleta", "criatividade",
+        "inteligente", "maravilhoso", "paralelepipedo", "otorrinolaringologista"
+    ]
+    
+    user_id = interaction.user.id
+    
+    if user_id in jogos_embaralhar:
+        await interaction.response.send_message(
+            f"❌ Você já tem uma palavra! Tente adivinhar: `{jogos_embaralhar[user_id]['embaralhada']}`\n"
+            "Use `/palpite <palavra>` para tentar ou `/desistiremb` para desistir.",
+            ephemeral=True
+        )
+        return
+    
+    palavra = random.choice(palavras)
+    # Embaralha a palavra
+    letras = list(palavra)
+    random.shuffle(letras)
+    embaralhada = "".join(letras)
+    
+    # Garante que a palavra embaralhada é diferente da original
+    tentativas = 0
+    while embaralhada == palavra and tentativas < 10:
+        random.shuffle(letras)
+        embaralhada = "".join(letras)
+        tentativas += 1
+    
+    jogos_embaralhar[user_id] = {
+        "palavra": palavra,
+        "embaralhada": embaralhada,
+        "tentativas": 0,
+        "max_tentativas": 5
+    }
+    
+    # Dica de quantidade de letras
+    dica = ""
+    if len(palavra) <= 5:
+        dica = "🟢 **Fácil**"
+    elif len(palavra) <= 7:
+        dica = "🟡 **Médio**"
+    else:
+        dica = "🔴 **Difícil**"
+    
+    embed = discord.Embed(
+        title="📝 Palavra Embaralhada",
+        description=f"**Palavra:** `{embaralhada}`\n\n"
+                    f"📏 **{len(palavra)} letras**\n"
+                    f"{dica}\n\n"
+                    f"Você tem **5 tentativas**!",
+        color=discord.Color.purple()
+    )
+    embed.add_field(
+        name="Como jogar",
+        value="Use `/palpite <palavra>` para tentar adivinhar\nUse `/desistiremb` para sair",
+        inline=False
+    )
+    embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="palpite", description="Tenta adivinhar a palavra embaralhada")
+@app_commands.describe(palavra="Seu palpite para a palavra")
+async def slash_palpite(interaction: discord.Interaction, palavra: str):
+    user_id = interaction.user.id
+    
+    if user_id not in jogos_embaralhar:
+        await interaction.response.send_message(
+            "❌ Você não tem um jogo em andamento! Use `/embaralhar` para começar.",
+            ephemeral=True
+        )
+        return
+    
+    jogo = jogos_embaralhar[user_id]
+    jogo["tentativas"] += 1
+    palavra_tentada = palavra.lower().strip()
+    
+    if palavra_tentada == jogo["palavra"]:
+        tentativas = jogo["tentativas"]
+        xp_bonus = 10 - (tentativas * 2)
+        if xp_bonus < 2:
+            xp_bonus = 2
+        
+        for _ in range(xp_bonus):
+            await increment_count(interaction.guild.id, interaction.user.id)
+        
+        embed = discord.Embed(
+            title="🎉 **VOCÊ ACERTOU!**",
+            description=f"A palavra era: **{jogo['palavra'].upper()}**\n"
+                        f"Tentativas: **{tentativas}**\n"
+                        f"🌟 XP bônus: **+{xp_bonus}**",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+        del jogos_embaralhar[user_id]
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    if jogo["tentativas"] >= jogo["max_tentativas"]:
+        embed = discord.Embed(
+            title="😢 **VOCÊ PERDEU!**",
+            description=f"A palavra era: **{jogo['palavra'].upper()}**\n"
+                        f"Tentativas: {jogo['tentativas']}/5",
+            color=discord.Color.red()
+        )
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+        del jogos_embaralhar[user_id]
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    # Dica: letras que estão na posição certa
+    dica_posicao = ""
+    for i, letra in enumerate(palavra_tentada):
+        if i < len(jogo["palavra"]) and letra == jogo["palavra"][i]:
+            dica_posicao += f"**{letra.upper()}** "
+        elif letra in jogo["palavra"]:
+            dica_posicao += f"_{letra}_ "
+        else:
+            dica_posicao += "• "
+    
+    # Completa se o palpite for menor que a palavra
+    if len(palavra_tentada) < len(jogo["palavra"]):
+        dica_posicao += "? " * (len(jogo["palavra"]) - len(palavra_tentada))
+    
+    embed = discord.Embed(
+        title="❌ **Tente novamente!**",
+        description=f"**Palavra:** `{jogo['embaralhada']}`\n"
+                    f"Seu palpite: `{palavra_tentada}`\n\n"
+                    f"**Dica:** {dica_posicao}\n\n"
+                    f"Tentativas: **{jogo['tentativas']}/5**\n\n"
+                    f"🟢 = letra certa na posição certa\n"
+                    f"🟡 = letra existe mas na posição errada\n"
+                    f"⚫ = letra não existe",
+        color=discord.Color.orange()
+    )
+    embed.set_footer(text=f"Jogador: {interaction.user.display_name} | Use /palpite ou /desistiremb")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="desistiremb", description="Desiste do jogo de palavra embaralhada")
+async def slash_desistiremb(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    
+    if user_id not in jogos_embaralhar:
+        await interaction.response.send_message("❌ Você não tem um jogo em andamento!", ephemeral=True)
+        return
+    
+    palavra = jogos_embaralhar[user_id]["palavra"]
+    del jogos_embaralhar[user_id]
+    
+    embed = discord.Embed(
+        title="🏳️ Você desistiu!",
+        description=f"A palavra era: **{palavra.upper()}**",
+        color=discord.Color.light_grey()
+    )
+    await interaction.response.send_message(embed=embed)
+
+# Dicionário para armazenar jogos da velha
+jogos_velha = {}
+
+@bot.tree.command(name="velha", description="⭕❌ Jogo da velha contra outro membro")
+@app_commands.describe(adversario="Quem vai jogar contra você")
+async def slash_velha(interaction: discord.Interaction, adversario: discord.Member):
+    if adversario.bot:
+        await interaction.response.send_message("❌ Você não pode jogar contra bots!", ephemeral=True)
+        return
+    
+    if adversario == interaction.user:
+        await interaction.response.send_message("❌ Você não pode jogar contra si mesmo!", ephemeral=True)
+        return
+    
+    # Verifica se algum dos jogadores já está em um jogo
+    for key, jogo in jogos_velha.items():
+        if interaction.user.id in jogo["jogadores"] or adversario.id in jogo["jogadores"]:
+            await interaction.response.send_message(
+                "❌ Um dos jogadores já está em um jogo da velha!",
+                ephemeral=True
+            )
+            return
+    
+    # Cria o jogo
+    jogo_id = f"{interaction.user.id}_{adversario.id}"
+    jogos_velha[jogo_id] = {
+        "tabuleiro": ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"],
+        "jogador_x": interaction.user.id,
+        "jogador_o": adversario.id,
+        "vez": interaction.user.id,
+        "simbolo_atual": "❌",
+        "jogadores": [interaction.user.id, adversario.id]
+    }
+    
+    tabuleiro = jogos_velha[jogo_id]["tabuleiro"]
+    
+    embed = discord.Embed(
+        title="⭕❌ Jogo da Velha",
+        description=f"**{interaction.user.display_name}** ❌ VS **{adversario.display_name}** ⭕\n\n"
+                    f"Vez de: {interaction.user.mention} ❌\n\n"
+                    f"{tabuleiro[0]} {tabuleiro[1]} {tabuleiro[2]}\n"
+                    f"{tabuleiro[3]} {tabuleiro[4]} {tabuleiro[5]}\n"
+                    f"{tabuleiro[6]} {tabuleiro[7]} {tabuleiro[8]}\n\n"
+                    f"Use `/jogar <posição>` para fazer sua jogada (1-9)",
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"Jogo: {interaction.user.display_name} vs {adversario.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="jogar", description="Faz uma jogada no jogo da velha")
+@app_commands.describe(posicao="Posição no tabuleiro (1-9)")
+@app_commands.choices(posicao=[
+    app_commands.Choice(name="1️⃣ Canto superior esquerdo", value="1"),
+    app_commands.Choice(name="2️⃣ Topo meio", value="2"),
+    app_commands.Choice(name="3️⃣ Canto superior direito", value="3"),
+    app_commands.Choice(name="4️⃣ Meio esquerda", value="4"),
+    app_commands.Choice(name="5️⃣ Centro", value="5"),
+    app_commands.Choice(name="6️⃣ Meio direita", value="6"),
+    app_commands.Choice(name="7️⃣ Canto inferior esquerdo", value="7"),
+    app_commands.Choice(name="8️⃣ Base meio", value="8"),
+    app_commands.Choice(name="9️⃣ Canto inferior direito", value="9")
+])
+async def slash_jogar(interaction: discord.Interaction, posicao: str):
+    user_id = interaction.user.id
+    pos = int(posicao) - 1
+    
+    # Encontra o jogo do usuário
+    jogo_encontrado = None
+    jogo_id_encontrado = None
+    for key, jogo in jogos_velha.items():
+        if user_id in jogo["jogadores"]:
+            jogo_encontrado = jogo
+            jogo_id_encontrado = key
+            break
+    
+    if not jogo_encontrado:
+        await interaction.response.send_message("❌ Você não está em um jogo da velha!", ephemeral=True)
+        return
+    
+    # Verifica se é a vez do jogador
+    if user_id != jogo_encontrado["vez"]:
+        await interaction.response.send_message("❌ Não é sua vez!", ephemeral=True)
+        return
+    
+    # Verifica se a posição está ocupada
+    simbolo = jogo_encontrado["simbolo_atual"]
+    if jogo_encontrado["tabuleiro"][pos] in ["❌", "⭕"]:
+        await interaction.response.send_message("❌ Essa posição já está ocupada!", ephemeral=True)
+        return
+    
+    # Faz a jogada
+    jogo_encontrado["tabuleiro"][pos] = simbolo
+    tab = jogo_encontrado["tabuleiro"]
+    
+    # Verifica vitória
+    vitoria = False
+    combinacoes = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],  # Linhas
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],  # Colunas
+        [0, 4, 8], [2, 4, 6]               # Diagonais
+    ]
+    
+    for combo in combinacoes:
+        if tab[combo[0]] == tab[combo[1]] == tab[combo[2]] == simbolo:
+            vitoria = True
+            break
+    
+    if vitoria:
+        jogador_x = interaction.guild.get_member(jogo_encontrado["jogador_x"])
+        jogador_o = interaction.guild.get_member(jogo_encontrado["jogador_o"])
+        
+        embed = discord.Embed(
+            title="🎉 **TEMOS UM VENCEDOR!**",
+            description=f"{jogador_x.display_name if jogador_x else 'Jogador X'} ❌ VS "
+                        f"{jogador_o.display_name if jogador_o else 'Jogador O'} ⭕\n\n"
+                        f"{tab[0]} {tab[1]} {tab[2]}\n"
+                        f"{tab[3]} {tab[4]} {tab[5]}\n"
+                        f"{tab[6]} {tab[7]} {tab[8]}\n\n"
+                        f"🏆 **{interaction.user.mention} venceu!**",
+            color=discord.Color.green()
+        )
+        
+        # XP bônus para o vencedor
+        for _ in range(10):
+            await increment_count(interaction.guild.id, user_id)
+        
+        embed.set_footer(text="🌟 Vencedor ganhou +10 XP!")
+        del jogos_velha[jogo_id_encontrado]
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    # Verifica empate
+    if all(pos in ["❌", "⭕"] for pos in tab):
+        embed = discord.Embed(
+            title="🤝 **EMPATE!**",
+            description=f"{tab[0]} {tab[1]} {tab[2]}\n"
+                        f"{tab[3]} {tab[4]} {tab[5]}\n"
+                        f"{tab[6]} {tab[7]} {tab[8]}\n\n"
+                        f"Deu velha! Ninguém ganhou.",
+            color=discord.Color.orange()
+        )
+        del jogos_velha[jogo_id_encontrado]
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    # Troca de vez
+    if jogo_encontrado["vez"] == jogo_encontrado["jogador_x"]:
+        jogo_encontrado["vez"] = jogo_encontrado["jogador_o"]
+        jogo_encontrado["simbolo_atual"] = "⭕"
+    else:
+        jogo_encontrado["vez"] = jogo_encontrado["jogador_x"]
+        jogo_encontrado["simbolo_atual"] = "❌"
+    
+    proximo_jogador = interaction.guild.get_member(jogo_encontrado["vez"])
+    
+    embed = discord.Embed(
+        title="⭕❌ Jogo da Velha",
+        description=f"Vez de: {proximo_jogador.mention if proximo_jogador else 'Alguém'} {jogo_encontrado['simbolo_atual']}\n\n"
+                    f"{tab[0]} {tab[1]} {tab[2]}\n"
+                    f"{tab[3]} {tab[4]} {tab[5]}\n"
+                    f"{tab[6]} {tab[7]} {tab[8]}\n\n"
+                    f"Use `/jogar <posição>` para jogar",
+        color=discord.Color.blue()
+    )
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="desistirvelha", description="Desiste do jogo da velha atual")
+async def slash_desistirvelha(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    
+    jogo_encontrado = None
+    jogo_id_encontrado = None
+    for key, jogo in jogos_velha.items():
+        if user_id in jogo["jogadores"]:
+            jogo_encontrado = jogo
+            jogo_id_encontrado = key
+            break
+    
+    if not jogo_encontrado:
+        await interaction.response.send_message("❌ Você não está em um jogo da velha!", ephemeral=True)
+        return
+    
+    adversario_id = jogo_encontrado["jogador_o"] if user_id == jogo_encontrado["jogador_x"] else jogo_encontrado["jogador_x"]
+    adversario = interaction.guild.get_member(adversario_id)
+    
+    embed = discord.Embed(
+        title="🏳️ Jogador desistiu!",
+        description=f"{interaction.user.mention} desistiu do jogo!\n"
+                    f"🏆 **{adversario.mention if adversario else 'Adversário'} venceu por W.O.!**",
+        color=discord.Color.orange()
+    )
+    
+    del jogos_velha[jogo_id_encontrado]
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="unban", description="Desbane um usuário pelo nome ou nome#tag")
 @app_commands.describe(usuario="Nome do usuário banido (ex: Fulano ou Fulano#1234)")
