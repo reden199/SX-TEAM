@@ -439,9 +439,25 @@ async def slash_criar(interaction: discord.Interaction, canais: str, emoji: str 
     # Extrai emoji se fornecido
     emoji_final = None
     if emoji:
+        # Remove espaços extras
+        emoji = emoji.strip()
+        
+        # Se a decoração foi informada, remove ela do emoji caso tenham vindo juntos
+        if decoracao:
+            decoracao_limpa = decoracao.strip()
+            # Remove a decoração do final do emoji (se estiver grudada)
+            if emoji.endswith(decoracao_limpa):
+                emoji = emoji[:-len(decoracao_limpa)].strip()
+            # Remove a decoração do início do emoji (se estiver grudada)
+            if emoji.startswith(decoracao_limpa):
+                emoji = emoji[len(decoracao_limpa):].strip()
+        
         emojis_extraidos = extrair_emojis(emoji)
         if emojis_extraidos:
-            emoji_final = emojis_extraidos[0]  # Pega o primeiro emoji
+            emoji_final = emojis_extraidos[0]
+    
+    # Limpa a decoração
+    decoracao_limpa = decoracao.strip() if decoracao else None
     
     canais_criados = []
     categoria = interaction.channel.category
@@ -453,12 +469,16 @@ async def slash_criar(interaction: discord.Interaction, canais: str, emoji: str 
         if emoji_final:
             partes_nome.append(emoji_final)
         
-        if decoracao:
-            partes_nome.append(f"{decoracao}{nome_canal}{decoracao}")
+        if decoracao_limpa:
+            # Garante que a decoração não tenha espaços
+            partes_nome.append(f"{decoracao_limpa}{nome_canal}{decoracao_limpa}")
         else:
             partes_nome.append(nome_canal)
         
         nome_final = "".join(partes_nome)
+        
+        # Garante que não há espaços no nome final
+        nome_final = nome_final.replace(" ", "-")
         
         try:
             novo_canal = await interaction.guild.create_text_channel(
@@ -786,7 +806,6 @@ async def prefix_decorar(ctx, canal_str: str = None, *, args: str = None):
     embed.set_footer(text=f"Decorado por {ctx.author.display_name}")
     await ctx.send(embed=embed)
 
-
 # ================ VERSÕES COM PREFIXO ================
 @bot.command(name='criar')
 @commands.has_permissions(administrator=True)
@@ -806,7 +825,6 @@ async def prefix_criar(ctx, *, args: str = None):
         canais = partes[0]
         resto = partes[1:] if len(partes) > 1 else []
     else:
-        # Pode ser só um canal sem vírgula
         canais = partes[0]
         resto = partes[1:] if len(partes) > 1 else []
     
@@ -818,11 +836,22 @@ async def prefix_criar(ctx, *, args: str = None):
     if not lista_canais:
         return await ctx.send("❌ Informe pelo menos um nome de canal!")
     
+    # Processa emoji
     emoji_final = None
     if emoji_str:
+        emoji_str = emoji_str.strip()
+        if decoracao:
+            decoracao_limpa = decoracao.strip()
+            if emoji_str.endswith(decoracao_limpa):
+                emoji_str = emoji_str[:-len(decoracao_limpa)].strip()
+            if emoji_str.startswith(decoracao_limpa):
+                emoji_str = emoji_str[len(decoracao_limpa):].strip()
+        
         emojis_extraidos = extrair_emojis(emoji_str)
         if emojis_extraidos:
             emoji_final = emojis_extraidos[0]
+    
+    decoracao_limpa = decoracao.strip() if decoracao else None
     
     canais_criados = []
     categoria = ctx.channel.category
@@ -833,12 +862,12 @@ async def prefix_criar(ctx, *, args: str = None):
         if emoji_final:
             partes_nome.append(emoji_final)
         
-        if decoracao:
-            partes_nome.append(f"{decoracao}{nome_canal}{decoracao}")
+        if decoracao_limpa:
+            partes_nome.append(f"{decoracao_limpa}{nome_canal}{decoracao_limpa}")
         else:
             partes_nome.append(nome_canal)
         
-        nome_final = "".join(partes_nome)
+        nome_final = "".join(partes_nome).replace(" ", "-")
         
         try:
             novo_canal = await ctx.guild.create_text_channel(
@@ -861,9 +890,6 @@ async def prefix_criar(ctx, *, args: str = None):
     
     embed.set_footer(text=f"Criado por {ctx.author.display_name}")
     await ctx.send(embed=embed)
-
-
-
 
 @bot.tree.command(name="unban", description="Desbane um usuário pelo nome ou nome#tag")
 @app_commands.describe(usuario="Nome do usuário banido (ex: Fulano ou Fulano#1234)")
