@@ -234,305 +234,216 @@ async def slash_ban(interaction: discord.Interaction, membro: discord.Member, mo
     except Exception as e:
         await interaction.response.send_message(f"Erro ao banir: {e}", ephemeral=True)
 
-@bot.tree.command(name="canais", description="Cria canais com nomes e emojis personalizados (apenas ADMs)")
+import re
+
+# ================ FUNÇÕES AUXILIARES PARA OS COMANDOS ================
+def extrair_emoji_do_nome(nome_canal):
+    """Extrai o emoji do início do nome do canal, se existir"""
+    # Padrão para emoji Unicode no início
+    emoji_pattern = re.compile(
+        "^[" 
+        "\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251"
+        "\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF"
+        "\U00002600-\U000026FF\U00002700-\U000027BF\U0001F780-\U0001F7FF"
+        "\U0001F800-\U0001F8FF\U00002B50\U00002764\U0000203C\U00002049"
+        "\U000020E3\U00002934-\U00002935\U00003030\U0000303D\U00003297"
+        "\U00003299\U0001F004\U0001F0CF\U0001F170-\U0001F171\U0001F17E"
+        "\U0001F17F\U0001F18E\U0001F191-\U0001F19A\U0001F1E6-\U0001F1FF"
+        "\U0001F201-\U0001F202\U0001F21A\U0001F22F\U0001F232-\U0001F23A"
+        "\U0001F250-\U0001F251\U0001F300-\U0001F321\U0001F324-\U0001F393"
+        "\U0001F396-\U0001F397\U0001F399-\U0001F39B\U0001F39E-\U0001F3F0"
+        "\U0001F3F3-\U0001F3F5\U0001F3F7-\U0001F4FD\U0001F4FF-\U0001F53D"
+        "\U0001F549-\U0001F54E\U0001F550-\U0001F567\U0001F56F-\U0001F570"
+        "\U0001F573-\U0001F57A\U0001F587\U0001F58A-\U0001F58D\U0001F590"
+        "\U0001F595-\U0001F596\U0001F5A4-\U0001F5A5\U0001F5A8\U0001F5B1"
+        "\U0001F5B2\U0001F5BC\U0001F5C2-\U0001F5C4\U0001F5D1-\U0001F5D3"
+        "\U0001F5DC-\U0001F5DE\U0001F5E1\U0001F5E3\U0001F5E8\U0001F5EF"
+        "\U0001F5F3\U0001F5FA-\U0001F64F\U0001F680-\U0001F6C5\U0001F6CB"
+        "\U0001F6D0-\U0001F6D2\U0001F6E0-\U0001F6E5\U0001F6E9\U0001F6EB"
+        "\U0001F6EC\U0001F6F0\U0001F6F3-\U0001F6F9\U0001F900-\U0001F9FF"
+        "\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U0000231A-\U0000231B"
+        "\U000023E9-\U000023F3\U000023F8-\U000023FA\U000023ED-\U000023EF"
+        "\U0001F440-\U0001F441\U0001F442-\U0001F445\U0001F446-\U0001F450"
+        "\U0001F46B-\U0001F46D\U0001F46E-\U0001F470\U0001F471-\U0001F478"
+        "\U0001F479-\U0001F47B\U0001F47C-\U0001F480\U0001F481-\U0001F487"
+        "\U0001F488-\U0001F48B\U0001F48C-\U0001F48F\U0001F490-\U0001F494"
+        "\U0001F5FB-\U0001F5FF\U0001F9D0-\U0001F9E6\U0001F9B0-\U0001F9BB"
+        "\U0001F9C0-\U0001F9C2\U0001F9E7-\U0001F9FF\U00002670-\U00002671"
+        "\U0000267F\U00002692-\U00002693\U000026A0-\U000026A1\U000026AA"
+        "\U000026AB\U000026BD-\U000026BE\U000026C4-\U000026C5\U000026CE"
+        "\U000026D4\U000026EA\U000026F2-\U000026F3\U000026F5\U000026FA"
+        "\U000026FD\U00002702\U00002708-\U0000270F\U00002712\U00002714"
+        "\U00002716\U0000271D\U00002721\U00002733-\U00002734\U00002744"
+        "\U00002747\U0000274C\U0000274E\U00002753-\U00002755\U00002757"
+        "\U00002763-\U00002764\U00002795-\U00002797\U000027A1\U000027B0"
+        "\U000027BF\U00002B05-\U00002B07\U00002B1B-\U00002B1C\U00002B50"
+        "\U00002B55\U0001F321\U0001F336\U0001F37D\U0001F396-\U0001F397"
+        "\U0001F399-\U0001F39B\U0001F39E-\U0001F39F\U0001F3CB-\U0001F3CE"
+        "\U0001F3D4-\U0001F3DF\U0001F3F3-\U0001F3F5\U0001F3F8-\U0001F3F9"
+        "\U0001F43F\U0001F441\U0001F4FD-\U0001F4FE\U0001F508-\U0001F50A"
+        "\U0001F50C-\U0001F514\U0001F516-\U0001F53D\U0001F549-\U0001F54A"
+        "\U0001F54B-\U0001F54E\U0001F56F-\U0001F570\U0001F573-\U0001F579"
+        "\U0001F57A\U0001F587\U0001F58A-\U0001F58D\U0001F590\U0001F595"
+        "\U0001F596\U0001F5A4\U0001F5A5-\U0001F5A8\U0001F5B1-\U0001F5B2"
+        "\U0001F5BC\U0001F5C2-\U0001F5C4\U0001F5D1-\U0001F5D3\U0001F5DC"
+        "\U0001F5DE\U0001F5E1\U0001F5E3\U0001F5E8\U0001F5EF\U0001F5F3"
+        "\U0001F5FA\U0001F6CB\U0001F6CD-\U0001F6CF\U0001F6E0-\U0001F6E5"
+        "\U0001F6E9\U0001F6F0\U0001F6F3\U0001F6F4-\U0001F6F6\U0001F6F7"
+        "\U0001F6F8\U0001F6F9\U0001F6FA\u2600-\u27BF\u2B50\u2B55\u231A"
+        "\u231B\u2328\u23CF\u23E9-\u23F3\u23F8-\u23FA\u24C2\u25AA\u25AB"
+        "\u25B6\u25C0\u25FB-\u25FE\u2702\u2705\u2708-\u270D\u270F\u2712"
+        "\u2714\u2716\u271D\u2721\u2728\u2733\u2734\u2744\u2747\u274C"
+        "\u274E\u2753-\u2755\u2757\u2763\u2764\u2795-\u2797\u27A1\u27B0"
+        "\u27BF\u2934\u2935\u2B05-\u2B07\u2B1B\u2B1C\u2B50\u2B55\u3030"
+        "\u303D\u3297\u3299]|"
+        "<a?:\w+:\d+>"  # Emoji personalizado do Discord
+        , flags=re.UNICODE
+    )
+    
+    match = emoji_pattern.match(nome_canal)
+    if match:
+        return match.group(0)
+    return None
+
+def extrair_decoracao_do_nome(nome_canal):
+    """Extrai a decoração do nome do canal (separador entre emoji e texto)"""
+    import re
+    
+    # Remove emoji do início se existir
+    emoji = extrair_emoji_do_nome(nome_canal)
+    if emoji:
+        nome_sem_emoji = nome_canal[len(emoji):]
+    else:
+        nome_sem_emoji = nome_canal
+    
+    # Procura por símbolos de decoração comuns no início
+    decoracao_pattern = re.compile(r'^[^\w\s]{1,3}')  # 1-3 símbolos não alfanuméricos
+    match = decoracao_pattern.match(nome_sem_emoji)
+    if match:
+        return match.group(0)
+    return None
+
+def extrair_texto_puro(nome_canal):
+    """Extrai apenas o texto do canal, removendo emoji e decoração"""
+    emoji = extrair_emoji_do_nome(nome_canal)
+    if emoji:
+        nome_sem_emoji = nome_canal[len(emoji):]
+    else:
+        nome_sem_emoji = nome_canal
+    
+    decoracao = extrair_decoracao_do_nome(nome_canal)
+    if decoracao:
+        # Remove a decoração do início e do fim
+        texto = nome_sem_emoji.strip()
+        # Remove decoração do início
+        while texto and any(texto.startswith(d) for d in [decoracao]):
+            texto = texto[len(decoracao):]
+        # Remove decoração do fim
+        while texto and any(texto.endswith(d) for d in [decoracao]):
+            texto = texto[:-len(decoracao)]
+        return texto.strip()
+    
+    return nome_sem_emoji.strip()
+
+def extrair_emojis(texto):
+    """Extrai emojis do texto, suportando emojis Unicode e personalizados do Discord"""
+    # Emojis personalizados do Discord
+    custom_emoji_pattern = re.compile(r'<a?:\w+:\d+>')
+    custom_emojis = custom_emoji_pattern.findall(texto)
+    texto_sem_custom = custom_emoji_pattern.sub('', texto)
+    
+    # Emojis Unicode
+    emoji_pattern = re.compile(
+        "[" 
+        "\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251"
+        "\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF"
+        "\U00002600-\U000026FF\U00002700-\U000027BF\U0001F780-\U0001F7FF"
+        "\U00002B50\U00002764\U0000203C\U00002049\U000020E3\U0001F004"
+        "\U0001F0CF\u23F0\u23F3\u2600-\u27BF\u2B50\u2B55\u231A\u231B"
+        "\u2328\u23CF\u23E9-\u23F3\u23F8-\u23FA\u24C2\u25AA\u25AB"
+        "\u25B6\u25C0\u25FB-\u25FE\u2600-\u2B55\u2702\u2705\u2708-\u270D"
+        "\u270F\u2712\u2714\u2716\u271D\u2721\u2728\u2733\u2734\u2744"
+        "\u2747\u274C\u274E\u2753-\u2755\u2757\u2763\u2764\u2795-\u2797"
+        "\u27A1\u27B0\u27BF\u2934\u2935\u2B05-\u2B07\u2B1B\u2B1C\u2B50"
+        "\u2B55\u3030\u303D\u3297\u3299]",
+        flags=re.UNICODE
+    )
+    
+    unicode_emojis = emoji_pattern.findall(texto_sem_custom)
+    
+    # Combina todos na ordem
+    todos_emojis = []
+    for emoji in custom_emojis:
+        idx = texto.find(emoji)
+        if idx != -1:
+            todos_emojis.append((idx, emoji))
+    
+    for emoji in unicode_emojis:
+        idx = texto.find(emoji)
+        if idx != -1:
+            is_in_custom = False
+            for custom_emoji in custom_emojis:
+                custom_idx = texto.find(custom_emoji)
+                if custom_idx != -1 and custom_idx <= idx < custom_idx + len(custom_emoji):
+                    is_in_custom = True
+                    break
+            if not is_in_custom:
+                todos_emojis.append((idx, emoji))
+    
+    todos_emojis.sort()
+    return [emoji for _, emoji in todos_emojis]
+
+
+# ================ COMANDO /CRIAR ================
+@bot.tree.command(name="criar", description="Cria canais com emoji e decoração (apenas ADMs)")
 @app_commands.describe(
     canais="Nomes dos canais separados por vírgula (ex: games, geral, fut)",
-    emojis="Emojis para cada canal na mesma ordem (ex: 💛💚💞 ou :emoji1: :emoji2:)",
-    decoracao="Decoração/divisor para o nome do canal (ex: ✧, -, |)"
+    emoji="Emoji para colocar antes do nome (opicional)",
+    decoracao="Decoração/divisor (opicional, ex: ・, ✧, |)"
 )
 @app_commands.default_permissions(administrator=True)
-async def slash_canais(interaction: discord.Interaction, canais: str, emojis: str, decoracao: str):
+async def slash_criar(interaction: discord.Interaction, canais: str, emoji: str = None, decoracao: str = None):
     await interaction.response.defer()
     
-    # Processa os nomes dos canais
     lista_canais = [c.strip() for c in canais.split(",") if c.strip()]
     
-    def extrair_emojis(texto_emojis):
-        """Extrai emojis do texto, suportando emojis Unicode e personalizados do Discord"""
-        emojis_encontrados = []
-        
-        # Primeiro, procura por emojis personalizados do Discord
-        import re
-        custom_emoji_pattern = re.compile(r'<a?:\w+:\d+>')
-        custom_emojis = custom_emoji_pattern.findall(texto_emojis)
-        
-        # Remove os emojis personalizados do texto para não duplicar
-        texto_sem_custom = custom_emoji_pattern.sub('', texto_emojis)
-        
-        # Procura por emojis Unicode no texto restante
-        emoji_pattern = re.compile(
-            "[" 
-            "\U0001F600-\U0001F64F"  # emoticons
-            "\U0001F300-\U0001F5FF"  # símbolos & pictogramas
-            "\U0001F680-\U0001F6FF"  # transporte & símbolos
-            "\U0001F1E0-\U0001F1FF"  # bandeiras
-            "\U00002702-\U000027B0"  # dingbats
-            "\U000024C2-\U0001F251"  # misc
-            "\U0001F900-\U0001F9FF"  # símbolos suplementares
-            "\U0001FA00-\U0001FA6F"  # chess symbols
-            "\U0001FA70-\U0001FAFF"  # symbols extended-A
-            "\U00002600-\U000026FF"  # misc symbols
-            "\U00002700-\U000027BF"  # dingbats
-            "\U0001F780-\U0001F7FF"  # geometric shapes ext
-            "\U0001F800-\U0001F8FF"  # supplemental arrows-c
-            "\U00002B50"              # star
-            "\U00002764"              # heart
-            "\U0000203C"              # !! 
-            "\U00002049"              # !?
-            "\U000020E3"              # combining enclosing keycap
-            "\U00002934-\U00002935"   # arrows
-            "\U00003030"              # wavy dash
-            "\U0000303D"              # part alternation mark
-            "\U00003297"              # circled ideograph secret
-            "\U00003299"              # circled ideograph congratulations
-            "\U0001F004"              # mahjong
-            "\U0001F0CF"              # playing card black joker
-            "\U0001F170-\U0001F171"   # A, B buttons
-            "\U0001F17E-\U0001F17F"   # O, P buttons
-            "\U0001F18E"              # AB button
-            "\U0001F191-\U0001F19A"   # CL, COOL, FREE, ID, NEW, NG, OK, SOS, UP, VS
-            "\U0001F1E6-\U0001F1FF"   # regional indicators (flags)
-            "\U0001F201-\U0001F202"   # Japanese symbols
-            "\U0001F21A"              # Chinese symbol
-            "\U0001F22F"              # Chinese symbol
-            "\U0001F232-\U0001F23A"   # symbols
-            "\U0001F250-\U0001F251"   # Chinese symbols
-            "\U0001F300-\U0001F321"   # misc symbols
-            "\U0001F324-\U0001F393"   # misc symbols
-            "\U0001F396-\U0001F397"   # misc symbols
-            "\U0001F399-\U0001F39B"   # misc symbols
-            "\U0001F39E-\U0001F3F0"   # misc symbols
-            "\U0001F3F3-\U0001F3F5"   # flags
-            "\U0001F3F7-\U0001F4FD"   # misc symbols
-            "\U0001F4FF-\U0001F53D"   # misc symbols
-            "\U0001F549-\U0001F54E"   # misc symbols
-            "\U0001F550-\U0001F567"   # clock faces
-            "\U0001F56F-\U0001F570"   # misc symbols
-            "\U0001F573-\U0001F57A"   # misc symbols
-            "\U0001F587"              # misc symbols
-            "\U0001F58A-\U0001F58D"   # misc symbols
-            "\U0001F590"              # misc symbols
-            "\U0001F595-\U0001F596"   # misc symbols
-            "\U0001F5A4-\U0001F5A5"   # misc symbols
-            "\U0001F5A8"              # misc symbols
-            "\U0001F5B1-\U0001F5B2"   # misc symbols
-            "\U0001F5BC"              # misc symbols
-            "\U0001F5C2-\U0001F5C4"   # misc symbols
-            "\U0001F5D1-\U0001F5D3"   # misc symbols
-            "\U0001F5DC-\U0001F5DE"   # misc symbols
-            "\U0001F5E1"              # misc symbols
-            "\U0001F5E3"              # misc symbols
-            "\U0001F5E8"              # misc symbols
-            "\U0001F5EF"              # misc symbols
-            "\U0001F5F3"              # misc symbols
-            "\U0001F5FA-\U0001F64F"   # misc symbols
-            "\U0001F680-\U0001F6C5"   # transport symbols
-            "\U0001F6CB-\U0001F6D2"   # transport symbols
-            "\U0001F6E0-\U0001F6E5"   # transport symbols
-            "\U0001F6E9"              # transport symbols
-            "\U0001F6EB-\U0001F6EC"   # transport symbols
-            "\U0001F6F0"              # transport symbols
-            "\U0001F6F3-\U0001F6F9"   # transport symbols
-            "\U0001F900-\U0001F9FF"   # supplemental symbols
-            "\U0001FA00-\U0001FA6F"   # chess symbols
-            "\U0001FA70-\U0001FAFF"   # symbols extended-A
-            "\U00002764"              # heart
-            "\U0001F495-\U0001F49F"   # hearts
-            "\U0001F4A0-\U0001F4A9"   # misc symbols
-            "\U0001F4AB-\U0001F4AF"   # misc symbols
-            "\U0001F4B0-\U0001F4BF"   # money symbols
-            "\U0001F4C0-\U0001F4CF"   # office symbols
-            "\U0001F4D0-\U0001F4D9"   # communication symbols
-            "\U0000231A-\U0000231B"   # watch, hourglass
-            "\U000023E9-\U000023F3"   # various
-            "\U000023F8-\U000023FA"   # various
-            "\U000023ED-\U000023EF"   # various
-            "\U0001F440-\U0001F441"   # eyes
-            "\U0001F442-\U0001F445"   # body parts
-            "\U0001F446-\U0001F450"   # hands
-            "\U0001F46B-\U0001F46D"   # couples
-            "\U0001F46E-\U0001F470"   # people
-            "\U0001F471-\U0001F478"   # people
-            "\U0001F479-\U0001F47B"   # fantasy
-            "\U0001F47C-\U0001F480"   # people/symbols
-            "\U0001F481-\U0001F487"   # gestures
-            "\U0001F488-\U0001F48B"   # love/mail
-            "\U0001F48C-\U0001F48F"   # kiss/couple
-            "\U0001F490-\U0001F494"   # hearts/objects
-            "\U0001F5FB-\U0001F5FF"   # various
-            "\U0001F9D0-\U0001F9E6"   # various
-            "\U0001F9B0-\U0001F9BB"   # animals/nature
-            "\U0001F9C0-\U0001F9C2"   # food/drink
-            "\U0001F9E7-\U0001F9FF"   # objects
-            "\U00002670-\U00002671"   # misc
-            "\U0000267F"              # wheelchair
-            "\U00002692-\U00002693"   # anchor/ferry
-            "\U000026A0-\U000026A1"   # warning/high voltage
-            "\U000026AA-\U000026AB"   # circles
-            "\U000026BD-\U000026BE"   # sports
-            "\U000026C4-\U000026C5"   # snowman/sun
-            "\U000026CE"              # ophiuchus
-            "\U000026D4"              # no entry
-            "\U000026EA"              # church
-            "\U000026F2-\U000026F3"   # fountain/golf
-            "\U000026F5"              # sailboat
-            "\U000026FA"              # tent
-            "\U000026FD"              # fuel pump
-            "\U00002702"              # scissors
-            "\U00002708-\U0000270F"   # plane/envelope/hand
-            "\U00002712"              # black nib
-            "\U00002714"              # check mark
-            "\U00002716"              # cross mark
-            "\U0000271D"              # latin cross
-            "\U00002721"              # star of david
-            "\U00002733-\U00002734"   # symbols
-            "\U00002744"              # snowflake
-            "\U00002747"              # sparkle
-            "\U0000274C"              # cross mark
-            "\U0000274E"              # cross mark
-            "\U00002753-\U00002755"   # question marks
-            "\U00002757"              # exclamation mark
-            "\U00002763-\U00002764"   # heart symbols
-            "\U00002795-\U00002797"   # math symbols
-            "\U000027A1"              # right arrow
-            "\U000027B0"              # curly loop
-            "\U000027BF"              # double curly loop
-            "\U00002B05-\U00002B07"   # arrows
-            "\U00002B1B-\U00002B1C"   # squares
-            "\U00002B50"              # star
-            "\U00002B55"              # circle
-            "\U0001F321"              # thermometer
-            "\U0001F336"              # hot pepper
-            "\U0001F37D"              # fork and knife
-            "\U0001F396-\U0001F397"   # military/reminder
-            "\U0001F399-\U0001F39B"   # audio/control
-            "\U0001F39E-\U0001F39F"   # film/symbols
-            "\U0001F3CB-\U0001F3CE"   # sports
-            "\U0001F3D4-\U0001F3DF"   # places
-            "\U0001F3F3-\U0001F3F5"   # flags
-            "\U0001F3F8-\U0001F3F9"   # sports/activities
-            "\U0001F43F"              # chipmunk
-            "\U0001F441"              # eye
-            "\U0001F4FD-\U0001F4FE"   # film/video
-            "\U0001F508-\U0001F50A"   # speaker
-            "\U0001F50C-\U0001F514"   # various
-            "\U0001F516-\U0001F53D"   # various
-            "\U0001F549-\U0001F54A"   # symbols
-            "\U0001F54B-\U0001F54E"   # various
-            "\U0001F56F-\U0001F570"   # various
-            "\U0001F573-\U0001F579"   # various
-            "\U0001F57A"              # various
-            "\U0001F587"              # various
-            "\U0001F58A-\U0001F58D"   # various
-            "\U0001F590"              # various
-            "\U0001F595-\U0001F596"   # various
-            "\U0001F5A4"              # mountain
-            "\U0001F5A5-\U0001F5A8"   # various
-            "\U0001F5B1-\U0001F5B2"   # various
-            "\U0001F5BC"              # various
-            "\U0001F5C2-\U0001F5C4"   # various
-            "\U0001F5D1-\U0001F5D3"   # various
-            "\U0001F5DC-\U0001F5DE"   # various
-            "\U0001F5E1"              # various
-            "\U0001F5E3"              # various
-            "\U0001F5E8"              # various
-            "\U0001F5EF"              # various
-            "\U0001F5F3"              # various
-            "\U0001F5FA"              # various
-            "\U0001F6CB"              # various
-            "\U0001F6CD-\U0001F6CF"   # various
-            "\U0001F6E0-\U0001F6E5"   # various
-            "\U0001F6E9"              # various
-            "\U0001F6F0"              # various
-            "\U0001F6F3"              # various
-            "\U0001F6F4-\U0001F6F6"   # various
-            "\U0001F6F7-\U0001F6F8"   # various
-            "\U0001F6F9"              # various
-            "\U0001F6FA"              # various
-            "]",
-            flags=re.UNICODE
-        )
-        
-        unicode_emojis = emoji_pattern.findall(texto_sem_custom)
-        
-        # Combina os emojis Unicode e personalizados na ordem que aparecem
-        # Mas precisamos intercalar corretamente
-        texto_completo = texto_emojis
-        pos_custom = {texto_completo.find(emoji): emoji for emoji in custom_emojis}
-        
-        # Procura por todos os emojis na string original, na ordem
-        todo_texto = texto_emojis
-        pos = 0
-        
-        # Cria uma lista de (posição, emoji) para todos os emojis
-        todos_emojis = []
-        
-        # Adiciona emojis customizados
-        for emoji in custom_emojis:
-            idx = todo_texto.find(emoji)
-            if idx != -1:
-                todos_emojis.append((idx, emoji))
-        
-        # Adiciona emojis Unicode
-        for emoji in unicode_emojis:
-            idx = todo_texto.find(emoji)
-            if idx != -1:
-                # Verifica se não é parte de um emoji customizado
-                is_part_of_custom = False
-                for custom_emoji in custom_emojis:
-                    custom_idx = todo_texto.find(custom_emoji)
-                    if custom_idx != -1 and custom_idx <= idx < custom_idx + len(custom_emoji):
-                        is_part_of_custom = True
-                        break
-                
-                if not is_part_of_custom:
-                    todos_emojis.append((idx, emoji))
-        
-        # Ordena por posição e remove duplicatas
-        todos_emojis.sort(key=lambda x: x[0])
-        emojis_final = []
-        posicoes_vistas = set()
-        
-        for pos, emoji in todos_emojis:
-            if pos not in posicoes_vistas:
-                emojis_final.append(emoji)
-                posicoes_vistas.add(pos)
-        
-        return emojis_final
-    
-    # Extrai os emojis
-    lista_emojis = extrair_emojis(emojis)
-    
-    # Verifica se há emojis suficientes
-    if len(lista_emojis) < len(lista_canais):
-        await interaction.followup.send(
-            f"❌ Você precisa fornecer pelo menos **{len(lista_canais)}** emoji(s)!\n"
-            f"Você forneceu apenas **{len(lista_emojis)}** emoji(s).\n\n"
-            f"**Dica:** Você pode usar emojis Unicode (💛, 🎮, etc) ou emojis personalizados do Discord!",
-            ephemeral=True
-        )
+    if not lista_canais:
+        await interaction.followup.send("❌ Você precisa informar pelo menos um nome de canal!", ephemeral=True)
         return
     
-    # Verifica se a decoração não está vazia
-    if not decoracao.strip():
-        await interaction.followup.send("❌ A decoração não pode estar vazia!", ephemeral=True)
-        return
+    # Extrai emoji se fornecido
+    emoji_final = None
+    if emoji:
+        emojis_extraidos = extrair_emojis(emoji)
+        if emojis_extraidos:
+            emoji_final = emojis_extraidos[0]  # Pega o primeiro emoji
     
     canais_criados = []
     categoria = interaction.channel.category
     
-    for i, nome_canal in enumerate(lista_canais):
-        nome_formatado = f"{decoracao}{nome_canal}{decoracao}"
-        emoji = lista_emojis[i]
-        nome_final = f"{emoji}{nome_formatado}"
+    for nome_canal in lista_canais:
+        # Monta o nome do canal
+        partes_nome = []
+        
+        if emoji_final:
+            partes_nome.append(emoji_final)
+        
+        if decoracao:
+            partes_nome.append(f"{decoracao}{nome_canal}{decoracao}")
+        else:
+            partes_nome.append(nome_canal)
+        
+        nome_final = "".join(partes_nome)
         
         try:
             novo_canal = await interaction.guild.create_text_channel(
                 name=nome_final,
                 category=categoria,
-                reason=f"Canal criado por {interaction.user.display_name}"
+                reason=f"Criado por {interaction.user.display_name}"
             )
-            canais_criados.append((emoji, novo_canal))
+            canais_criados.append(novo_canal)
         except Exception as e:
             await interaction.followup.send(
                 f"❌ Erro ao criar o canal `{nome_canal}`: {e}",
@@ -547,124 +458,364 @@ async def slash_canais(interaction: discord.Interaction, canais: str, emojis: st
         color=discord.Color.green()
     )
     
-    for i, (emoji, canal) in enumerate(canais_criados):
+    for i, canal in enumerate(canais_criados):
         embed.add_field(
             name=f"Canal {i+1}",
-            value=f"{emoji} {canal.mention}",
+            value=canal.mention,
             inline=False
         )
     
     embed.set_footer(text=f"Criado por {interaction.user.display_name}")
     await interaction.followup.send(embed=embed)
 
-# Versão com prefixo atualizada também
-@bot.command(name='canais')
+
+# ================ COMANDO /DECORAR (SLASH) ================
+@bot.tree.command(name="decorar", description="Edita a decoração e emoji de canais existentes (apenas ADMs)")
+@app_commands.describe(
+    canal="Canal que será decorado (use 'all' para todos os canais de texto)",
+    emoji="Novo emoji (opicional, substitui o atual se existir)",
+    decoracao="Nova decoração (opicional, ex: ・, ✧, |)"
+)
+@app_commands.default_permissions(administrator=True)
+async def slash_decorar(interaction: discord.Interaction, canal: str, emoji: str = None, decoracao: str = None):
+    await interaction.response.defer()
+    
+    if not emoji and not decoracao:
+        await interaction.followup.send("❌ Você precisa informar pelo menos um emoji ou uma decoração!", ephemeral=True)
+        return
+    
+    # Determina quais canais serão decorados
+    canais_para_decorar = []
+    
+    if canal.lower() == "all":
+        # Pega todos os canais de texto do servidor
+        canais_para_decorar = interaction.guild.text_channels
+        if not canais_para_decorar:
+            await interaction.followup.send("❌ Nenhum canal de texto encontrado no servidor!", ephemeral=True)
+            return
+    else:
+        # Tenta encontrar o canal por ID, menção ou nome
+        try:
+            # Remove <# e > se for menção
+            canal_id = canal.strip().replace("<#", "").replace(">", "")
+            
+            # Tenta converter para inteiro (ID)
+            canal_obj = interaction.guild.get_channel(int(canal_id))
+            
+            if not canal_obj:
+                # Tenta encontrar por nome
+                canal_obj = discord.utils.get(interaction.guild.text_channels, name=canal)
+            
+            if not canal_obj:
+                await interaction.followup.send(f"❌ Canal `{canal}` não encontrado!", ephemeral=True)
+                return
+            
+            canais_para_decorar = [canal_obj]
+        except ValueError:
+            # Busca por nome
+            canal_obj = discord.utils.get(interaction.guild.text_channels, name=canal)
+            if not canal_obj:
+                await interaction.followup.send(f"❌ Canal `{canal}` não encontrado!", ephemeral=True)
+                return
+            canais_para_decorar = [canal_obj]
+        except Exception as e:
+            await interaction.followup.send(f"❌ Erro ao buscar canal: {e}", ephemeral=True)
+            return
+    
+    # Processa o emoji
+    novo_emoji = None
+    if emoji:
+        emojis_extraidos = extrair_emojis(emoji)
+        if emojis_extraidos:
+            novo_emoji = emojis_extraidos[0]
+        else:
+            await interaction.followup.send("❌ Nenhum emoji válido encontrado!", ephemeral=True)
+            return
+    
+    # Lista para armazenar resultados
+    canais_modificados = []
+    canais_com_erro = []
+    
+    for canal_obj in canais_para_decorar:
+        try:
+            nome_atual = canal_obj.name
+            
+            # Extrai o texto puro (sem emoji e sem decoração)
+            texto_puro = extrair_texto_puro(nome_atual)
+            
+            # Determina o emoji para este canal
+            emoji_canal = novo_emoji if novo_emoji else extrair_emoji_do_nome(nome_atual)
+            
+            # Determina a decoração para este canal
+            decoracao_canal = decoracao if decoracao else extrair_decoracao_do_nome(nome_atual)
+            
+            # Monta o novo nome
+            partes_nome = []
+            
+            if emoji_canal:
+                partes_nome.append(emoji_canal)
+            
+            if decoracao_canal:
+                partes_nome.append(f"{decoracao_canal}{texto_puro}{decoracao_canal}")
+            else:
+                partes_nome.append(texto_puro)
+            
+            novo_nome = "".join(partes_nome)
+            
+            # Verifica se o nome é válido
+            if len(novo_nome) < 1 or len(novo_nome) > 100:
+                canais_com_erro.append(f"{canal_obj.mention} (nome muito longo/curto)")
+                continue
+            
+            # Só edita se o nome mudou
+            if novo_nome != nome_atual:
+                await canal_obj.edit(name=novo_nome, reason=f"Decorado por {interaction.user.display_name}")
+                canais_modificados.append((canal_obj, nome_atual, novo_nome))
+            
+        except Exception as e:
+            canais_com_erro.append(f"{canal_obj.mention}: {e}")
+    
+    # Monta a resposta
+    if not canais_modificados and not canais_com_erro:
+        await interaction.followup.send("ℹ️ Nenhum canal precisou ser modificado.", ephemeral=True)
+        return
+    
+    embed = discord.Embed(
+        title="✅ Canais Decorados!",
+        color=discord.Color.green()
+    )
+    
+    if canais_modificados:
+        if len(canais_modificados) <= 10:
+            # Mostra detalhes se forem até 10 canais
+            for canal_obj, nome_antigo, nome_novo in canais_modificados:
+                embed.add_field(
+                    name=canal_obj.mention,
+                    value=f"`{nome_antigo}` → `{nome_novo}`",
+                    inline=False
+                )
+        else:
+            # Apenas resumo se forem muitos
+            embed.description = f"**{len(canais_modificados)}** canais foram modificados com sucesso!"
+            
+            # Mostra os primeiros 5 como exemplo
+            embed.add_field(
+                name="Exemplos:",
+                value="\n".join([f"{c.mention}: `{a}` → `{n}`" for c, a, n in canais_modificados[:5]]),
+                inline=False
+            )
+            if len(canais_modificados) > 5:
+                embed.add_field(
+                    name="...",
+                    value=f"e mais {len(canais_modificados) - 5} canais",
+                    inline=False
+                )
+    
+    if canais_com_erro:
+        embed.add_field(
+            name="❌ Erros:",
+            value="\n".join(canais_com_erro[:5]),
+            inline=False
+        )
+    
+    if novo_emoji:
+        embed.add_field(name="Emoji aplicado", value=novo_emoji, inline=True)
+    if decoracao:
+        embed.add_field(name="Decoração aplicada", value=decoracao, inline=True)
+    
+    embed.set_footer(text=f"Decorado por {interaction.user.display_name}")
+    await interaction.followup.send(embed=embed)
+
+
+# ================ COMANDO /DECORAR (PREFIXO) ================
+@bot.command(name='decorar')
 @commands.has_permissions(administrator=True)
-async def prefix_canais(ctx, canais: str, *, args: str = None):
+async def prefix_decorar(ctx, canal_str: str = None, *, args: str = None):
     """
-    Cria canais com emojis e decoração
-    Uso: /canais nome1,nome2,nome3 emoji1,emoji2,emoji3 decoração
-    Exemplo: /canais games,geral 💛💚 ✧
-    Exemplo: /canais vip,mod :star: :crown: |
+    Decora canais existentes
+    Uso: /decorar #canal [emoji] [decoração]
+    Uso: /decorar all [emoji] [decoração]
+    Exemplo: /decorar #games ❤ ・
+    Exemplo: /decorar all 💛 ・
+    """
+    if not canal_str:
+        return await ctx.send("❌ Use: `/decorar <#canal ou all> [emoji] [decoração]`")
+    
+    if not args:
+        return await ctx.send("❌ Informe pelo menos um emoji ou decoração!")
+    
+    partes = args.split()
+    emoji_str = partes[0] if len(partes) > 0 else None
+    decoracao = partes[1] if len(partes) > 1 else None
+    
+    # Determina quais canais serão decorados
+    canais_para_decorar = []
+    
+    if canal_str.lower() == "all":
+        canais_para_decorar = ctx.guild.text_channels
+        if not canais_para_decorar:
+            return await ctx.send("❌ Nenhum canal de texto encontrado!")
+    else:
+        # Tenta encontrar o canal
+        try:
+            # Remove <# e > se for menção
+            canal_id = canal_str.strip().replace("<#", "").replace(">", "")
+            canal_obj = ctx.guild.get_channel(int(canal_id))
+            
+            if not canal_obj:
+                canal_obj = discord.utils.get(ctx.guild.text_channels, name=canal_str)
+            
+            if not canal_obj:
+                return await ctx.send(f"❌ Canal `{canal_str}` não encontrado!")
+            
+            canais_para_decorar = [canal_obj]
+        except ValueError:
+            canal_obj = discord.utils.get(ctx.guild.text_channels, name=canal_str)
+            if not canal_obj:
+                return await ctx.send(f"❌ Canal `{canal_str}` não encontrado!")
+            canais_para_decorar = [canal_obj]
+    
+    # Processa o emoji
+    novo_emoji = None
+    if emoji_str:
+        emojis_extraidos = extrair_emojis(emoji_str)
+        if emojis_extraidos:
+            novo_emoji = emojis_extraidos[0]
+        else:
+            return await ctx.send("❌ Emoji inválido!")
+    
+    # Decora os canais
+    canais_modificados = []
+    canais_com_erro = []
+    
+    for canal_obj in canais_para_decorar:
+        try:
+            nome_atual = canal_obj.name
+            texto_puro = extrair_texto_puro(nome_atual)
+            
+            emoji_canal = novo_emoji if novo_emoji else extrair_emoji_do_nome(nome_atual)
+            decoracao_canal = decoracao if decoracao else extrair_decoracao_do_nome(nome_atual)
+            
+            partes_nome = []
+            if emoji_canal:
+                partes_nome.append(emoji_canal)
+            
+            if decoracao_canal:
+                partes_nome.append(f"{decoracao_canal}{texto_puro}{decoracao_canal}")
+            else:
+                partes_nome.append(texto_puro)
+            
+            novo_nome = "".join(partes_nome)
+            
+            if len(novo_nome) < 1 or len(novo_nome) > 100:
+                canais_com_erro.append(f"{canal_obj.mention} (nome inválido)")
+                continue
+            
+            if novo_nome != nome_atual:
+                await canal_obj.edit(name=novo_nome, reason=f"Decorado por {ctx.author.display_name}")
+                canais_modificados.append((canal_obj, nome_atual, novo_nome))
+            
+        except Exception as e:
+            canais_com_erro.append(f"{canal_obj.mention}: {e}")
+    
+    if not canais_modificados and not canais_com_erro:
+        return await ctx.send("ℹ️ Nenhum canal precisou ser modificado.")
+    
+    embed = discord.Embed(
+        title="✅ Canais Decorados!",
+        color=discord.Color.green()
+    )
+    
+    if canais_modificados:
+        if len(canais_modificados) <= 10:
+            for canal_obj, nome_antigo, nome_novo in canais_modificados:
+                embed.add_field(
+                    name=canal_obj.mention,
+                    value=f"`{nome_antigo}` → `{nome_novo}`",
+                    inline=False
+                )
+        else:
+            embed.description = f"**{len(canais_modificados)}** canais modificados!"
+            embed.add_field(
+                name="Exemplos:",
+                value="\n".join([f"{c.mention}: `{a}` → `{n}`" for c, a, n in canais_modificados[:5]]),
+                inline=False
+            )
+            if len(canais_modificados) > 5:
+                embed.add_field(
+                    name="...",
+                    value=f"e mais {len(canais_modificados) - 5} canais",
+                    inline=False
+                )
+    
+    if canais_com_erro:
+        embed.add_field(
+            name="❌ Erros:",
+            value="\n".join(canais_com_erro[:5]),
+            inline=False
+        )
+    
+    if novo_emoji:
+        embed.add_field(name="Emoji", value=novo_emoji, inline=True)
+    if decoracao:
+        embed.add_field(name="Decoração", value=decoracao, inline=True)
+    
+    embed.set_footer(text=f"Decorado por {ctx.author.display_name}")
+    await ctx.send(embed=embed)
+
+
+# ================ VERSÕES COM PREFIXO ================
+@bot.command(name='criar')
+@commands.has_permissions(administrator=True)
+async def prefix_criar(ctx, *, args: str = None):
+    """
+    Cria canais com emoji e decoração
+    Uso: /criar nome1,nome2 emoji decoração
+    Exemplo: /criar games,geral 💛 ・
+    Exemplo: /criar chat  (apenas o nome)
     """
     if not args:
-        return await ctx.send("❌ Use: `/canais nomes emojis decoração`\nExemplo: `/canais games,geral 💛💚 ✧`")
+        return await ctx.send("❌ Use: `/criar nome1,nome2 [emoji] [decoração]`")
     
-    # Divide os argumentos restantes
-    import shlex
-    try:
-        partes = shlex.split(args)
-    except:
-        partes = args.split()
+    partes = args.split()
     
-    if len(partes) < 2:
-        return await ctx.send("❌ Faltam argumentos! Use: `/canais nomes emojis decoração`")
+    if ',' in partes[0]:
+        canais = partes[0]
+        resto = partes[1:] if len(partes) > 1 else []
+    else:
+        # Pode ser só um canal sem vírgula
+        canais = partes[0]
+        resto = partes[1:] if len(partes) > 1 else []
     
-    emojis_str = partes[0]
-    decoracao = ' '.join(partes[1:])
+    emoji_str = resto[0] if len(resto) > 0 else None
+    decoracao = resto[1] if len(resto) > 1 else None
     
-    # Processa os nomes dos canais
     lista_canais = [c.strip() for c in canais.split(",") if c.strip()]
     
-    # Mesma função de extrair emojis
-    def extrair_emojis_prefix(texto_emojis):
-        import re
-        emojis_encontrados = []
-        
-        # Emojis personalizados do Discord
-        custom_emoji_pattern = re.compile(r'<a?:\w+:\d+>')
-        custom_emojis = custom_emoji_pattern.findall(texto_emojis)
-        texto_sem_custom = custom_emoji_pattern.sub('', texto_emojis)
-        
-        # Emojis Unicode
-        emoji_pattern = re.compile(
-            "[" 
-            "\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
-            "\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251"
-            "\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF"
-            "\U00002600-\U000026FF\U00002700-\U000027BF\U0001F780-\U0001F7FF"
-            "\U00002B50\U00002764\U0000203C\U00002049\U000020E3\U0001F004"
-            "\U0001F0CF\u23F0\u23F3\u2600-\u27BF\u2B50\u2B55\u231A\u231B"
-            "\u2328\u23CF\u23E9-\u23F3\u23F8-\u23FA\u24C2\u25AA\u25AB"
-            "\u25B6\u25C0\u25FB-\u25FE\u2600-\u2B55\u2702\u2705\u2708-\u270D"
-            "\u270F\u2712\u2714\u2716\u271D\u2721\u2728\u2733\u2734\u2744"
-            "\u2747\u274C\u274E\u2753-\u2755\u2757\u2763\u2764\u2795-\u2797"
-            "\u27A1\u27B0\u27BF\u2934\u2935\u2B05-\u2B07\u2B1B\u2B1C\u2B50"
-            "\u2B55\u3030\u303D\u3297\u3299\U0001F004\U0001F0CF\U0001F170"
-            "\U0001F171\U0001F17E\U0001F17F\U0001F18E\U0001F191-\U0001F19A"
-            "\U0001F1E6-\U0001F1FF\U0001F201\U0001F202\U0001F21A\U0001F22F"
-            "\U0001F232-\U0001F23A\U0001F250\U0001F251\U0001F300-\U0001F6F9"
-            "\U0001F7E0-\U0001F7EB\U0001F90D-\U0001F93A\U0001F93C-\U0001F945"
-            "\U0001F947-\U0001F971\U0001F973-\U0001F976\U0001F97A-\U0001F9A2"
-            "\U0001F9A5-\U0001F9AA\U0001F9AE-\U0001F9CA\U0001F9CD-\U0001F9FF"
-            "\U0001FA00-\U0001FA6F\U0001FA70-\U0001FA73\U0001FA78-\U0001FA7A"
-            "\U0001FA80-\U0001FA82\U0001FA90-\U0001FA95" 
-            "]",
-            flags=re.UNICODE
-        )
-        
-        unicode_emojis = emoji_pattern.findall(texto_sem_custom)
-        
-        # Ordena por posição no texto original
-        todos_emojis = []
-        for emoji in custom_emojis:
-            idx = texto_emojis.find(emoji)
-            if idx != -1:
-                todos_emojis.append((idx, emoji))
-        
-        for emoji in unicode_emojis:
-            idx = texto_emojis.find(emoji)
-            if idx != -1:
-                is_in_custom = False
-                for custom_emoji in custom_emojis:
-                    custom_idx = texto_emojis.find(custom_emoji)
-                    if custom_idx != -1 and custom_idx <= idx < custom_idx + len(custom_emoji):
-                        is_in_custom = True
-                        break
-                if not is_in_custom:
-                    todos_emojis.append((idx, emoji))
-        
-        todos_emojis.sort()
-        return [emoji for _, emoji in todos_emojis]
+    if not lista_canais:
+        return await ctx.send("❌ Informe pelo menos um nome de canal!")
     
-    lista_emojis = extrair_emojis_prefix(emojis_str)
-    
-    if len(lista_emojis) < len(lista_canais):
-        return await ctx.send(
-            f"❌ Você precisa de **{len(lista_canais)}** emoji(s), mas só forneceu **{len(lista_emojis)}**!\n"
-            f"Dica: Use emojis Unicode ou emojis personalizados do Discord."
-        )
-    
-    if not decoracao.strip():
-        return await ctx.send("❌ A decoração não pode estar vazia!")
+    emoji_final = None
+    if emoji_str:
+        emojis_extraidos = extrair_emojis(emoji_str)
+        if emojis_extraidos:
+            emoji_final = emojis_extraidos[0]
     
     canais_criados = []
     categoria = ctx.channel.category
     
-    for i, nome_canal in enumerate(lista_canais):
-        nome_formatado = f"{decoracao}{nome_canal}{decoracao}"
-        emoji = lista_emojis[i]
-        nome_final = f"{emoji}{nome_formatado}"
+    for nome_canal in lista_canais:
+        partes_nome = []
+        
+        if emoji_final:
+            partes_nome.append(emoji_final)
+        
+        if decoracao:
+            partes_nome.append(f"{decoracao}{nome_canal}{decoracao}")
+        else:
+            partes_nome.append(nome_canal)
+        
+        nome_final = "".join(partes_nome)
         
         try:
             novo_canal = await ctx.guild.create_text_channel(
@@ -672,7 +823,7 @@ async def prefix_canais(ctx, canais: str, *, args: str = None):
                 category=categoria,
                 reason=f"Criado por {ctx.author.display_name}"
             )
-            canais_criados.append((emoji, novo_canal))
+            canais_criados.append(novo_canal)
         except Exception as e:
             return await ctx.send(f"❌ Erro ao criar `{nome_canal}`: {e}")
     
@@ -682,11 +833,14 @@ async def prefix_canais(ctx, canais: str, *, args: str = None):
         color=discord.Color.green()
     )
     
-    for i, (emoji, canal) in enumerate(canais_criados):
-        embed.add_field(name=f"Canal {i+1}", value=f"{emoji} {canal.mention}", inline=False)
+    for canal in canais_criados:
+        embed.add_field(name="Canal", value=canal.mention, inline=False)
     
     embed.set_footer(text=f"Criado por {ctx.author.display_name}")
     await ctx.send(embed=embed)
+
+
+
 
 @bot.tree.command(name="unban", description="Desbane um usuário pelo nome ou nome#tag")
 @app_commands.describe(usuario="Nome do usuário banido (ex: Fulano ou Fulano#1234)")
