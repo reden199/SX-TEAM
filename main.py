@@ -441,16 +441,12 @@ async def slash_criar(interaction: discord.Interaction, canais: str, emoji: str 
     # Extrai emoji se fornecido
     emoji_final = None
     if emoji:
-        # Remove espaços extras
         emoji = emoji.strip()
         
-        # Se a decoração foi informada, remove ela do emoji caso tenham vindo juntos
         if decoracao:
             decoracao_limpa = decoracao.strip()
-            # Remove a decoração do final do emoji (se estiver grudada)
             if emoji.endswith(decoracao_limpa):
                 emoji = emoji[:-len(decoracao_limpa)].strip()
-            # Remove a decoração do início do emoji (se estiver grudada)
             if emoji.startswith(decoracao_limpa):
                 emoji = emoji[len(decoracao_limpa):].strip()
         
@@ -458,28 +454,28 @@ async def slash_criar(interaction: discord.Interaction, canais: str, emoji: str 
         if emojis_extraidos:
             emoji_final = emojis_extraidos[0]
     
-    # Limpa a decoração
     decoracao_limpa = decoracao.strip() if decoracao else None
     
     canais_criados = []
     categoria = interaction.channel.category
     
     for nome_canal in lista_canais:
-        # Monta o nome do canal
         partes_nome = []
         
-        if emoji_final:
-            partes_nome.append(emoji_final)
-        
-        if decoracao_limpa:
-            # Garante que a decoração não tenha espaços
-            partes_nome.append(f"{decoracao_limpa}{nome_canal}{decoracao_limpa}")
+        if emoji_final and decoracao_limpa:
+            # Emoji + decoração + nome (sem decoração no final)
+            partes_nome.append(f"{emoji_final}{decoracao_limpa}{nome_canal}")
+        elif emoji_final:
+            # Apenas emoji + nome
+            partes_nome.append(f"{emoji_final}{nome_canal}")
+        elif decoracao_limpa:
+            # Apenas decoração + nome (sem decoração no final)
+            partes_nome.append(f"{decoracao_limpa}{nome_canal}")
         else:
+            # Apenas nome
             partes_nome.append(nome_canal)
         
         nome_final = "".join(partes_nome)
-        
-        # Garante que não há espaços no nome final
         nome_final = nome_final.replace(" ", "-")
         
         try:
@@ -496,7 +492,6 @@ async def slash_criar(interaction: discord.Interaction, canais: str, emoji: str 
             )
             return
     
-    # Confirmação
     embed = discord.Embed(
         title="✅ Canais Criados com Sucesso!",
         description=f"Foram criados **{len(canais_criados)}** canal(is):",
@@ -512,7 +507,6 @@ async def slash_criar(interaction: discord.Interaction, canais: str, emoji: str 
     
     embed.set_footer(text=f"Criado por {interaction.user.display_name}")
     await interaction.followup.send(embed=embed)
-
 
 # ================ COMANDO /DECORAR (SLASH) ================
 @bot.tree.command(name="decorar", description="Edita a decoração e emoji de canais existentes (apenas ADMs)")
@@ -848,7 +842,6 @@ async def prefix_criar(ctx, *, args: str = None):
     if not lista_canais:
         return await ctx.send("❌ Informe pelo menos um nome de canal!")
     
-    # Processa emoji
     emoji_final = None
     if emoji_str:
         emoji_str = emoji_str.strip()
@@ -871,12 +864,17 @@ async def prefix_criar(ctx, *, args: str = None):
     for nome_canal in lista_canais:
         partes_nome = []
         
-        if emoji_final:
-            partes_nome.append(emoji_final)
-        
-        if decoracao_limpa:
-            partes_nome.append(f"{decoracao_limpa}{nome_canal}{decoracao_limpa}")
+        if emoji_final and decoracao_limpa:
+            # Emoji + decoração + nome (sem decoração no final)
+            partes_nome.append(f"{emoji_final}{decoracao_limpa}{nome_canal}")
+        elif emoji_final:
+            # Apenas emoji + nome
+            partes_nome.append(f"{emoji_final}{nome_canal}")
+        elif decoracao_limpa:
+            # Apenas decoração + nome (sem decoração no final)
+            partes_nome.append(f"{decoracao_limpa}{nome_canal}")
         else:
+            # Apenas nome
             partes_nome.append(nome_canal)
         
         nome_final = "".join(partes_nome).replace(" ", "-")
