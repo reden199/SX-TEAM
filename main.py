@@ -806,6 +806,16 @@ async def prefix_decorar(ctx, canal_str: str = None, *, args: str = None):
     embed.set_footer(text=f"Decorado por {ctx.author.display_name}")
     await ctx.send(embed=embed)
 
+@bot.tree.command(name="sincronizar", description="Sincroniza os comandos slash (apenas ADM)")
+@app_commands.default_permissions(administrator=True)
+async def slash_sincronizar(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        synced = await bot.tree.sync()
+        await interaction.followup.send(f"✅ Sincronizado! {len(synced)} comandos atualizados.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Erro ao sincronizar: {e}", ephemeral=True)
+
 # ================ VERSÕES COM PREFIXO ================
 @bot.command(name='criar')
 @commands.has_permissions(administrator=True)
