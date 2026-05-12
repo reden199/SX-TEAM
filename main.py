@@ -5,6 +5,9 @@ import datetime
 import traceback
 import httpx
 import random
+import re
+import time
+from collections import defaultdict
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask
@@ -25,6 +28,34 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix='/', intents=intents, help_command=None)
+
+# ================ Rate Limiter ================
+class RateLimiter:
+    def __init__(self, calls_per_second=5):
+        self.calls_per_second = calls_per_second
+        self.last_calls = []
+        self.lock = asyncio.Lock()
+    
+    async def wait_if_needed(self):
+        async with self.lock:
+            now = time.time()
+            self.last_calls = [t for t in self.last_calls if now - t < 1.0]
+            
+            if len(self.last_calls) >= self.calls_per_second:
+                wait_time = 1.0 - (now - self.last_calls[0])
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                self.last_calls = []
+            
+            self.last_calls.append(time.time())
+
+# Criar rate limiters
+supabase_limiter = RateLimiter(calls_per_second=5)
+discord_api_limiter = RateLimiter(calls_per_second=10)
+
+# ================ Cache para mensagens ================
+message_cache = defaultdict(lambda: defaultdict(int))
+cache_lock = asyncio.Lock()
 
 # ================ Supabase via REST API ================
 SUPABASE_URL = os.environ.get('SUPABASE_URL')
@@ -50,88 +81,143 @@ async def init_db():
             print(f"❌ ERRO ao conectar no Supabase: {e}")
             traceback.print_exc()
 
+async def supabase_request_with_retry(func, max_retries=3):
+    """Faz requisições com retry e backoff exponencial"""
+    await supabase_limiter.wait_if_needed()
+    
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient() as client:
+                return await func(client)
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 0.5
+                print(f"Erro na requisição Supabase, tentando novamente em {wait_time}s: {e}")
+                await asyncio.sleep(wait_time)
+            else:
+                raise e
+
 async def increment_count(guild_id: int, user_id: int):
+    """Mantida para compatibilidade, mas não usada diretamente"""
+    await increment_count_batch(guild_id, user_id, 1)
+
+async def increment_count_batch(guild_id: int, user_id: int, count: int):
+    """Atualiza o contador adicionando um valor específico"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
     
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}&select=count",
+    async def do_request(client):
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}&select=count",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}"
+            }
+        )
+        data = response.json()
+        
+        if data:
+            current = data[0]['count']
+            await client.patch(
+                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}",
                 headers={
                     "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}"
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal"
+                },
+                json={"count": current + count}
+            )
+        else:
+            await client.post(
+                f"{SUPABASE_URL}/rest/v1/counts",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal"
+                },
+                json={
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                    "count": count
                 }
             )
-            data = response.json()
-            
-            if data:
-                current_count = data[0]['count']
-                await client.patch(
-                    f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}",
-                    headers={
-                        "apikey": SUPABASE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_KEY}",
-                        "Content-Type": "application/json",
-                        "Prefer": "return=minimal"
-                    },
-                    json={"count": current_count + 1}
-                )
-            else:
-                await client.post(
-                    f"{SUPABASE_URL}/rest/v1/counts",
-                    headers={
-                        "apikey": SUPABASE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_KEY}",
-                        "Content-Type": "application/json",
-                        "Prefer": "return=minimal"
-                    },
-                    json={
-                        "guild_id": guild_id,
-                        "user_id": user_id,
-                        "count": 1
-                    }
-                )
-        except Exception as e:
-            print(f"ERRO ao incrementar contagem: {e}")
+    
+    try:
+        await supabase_request_with_retry(do_request)
+    except Exception as e:
+        print(f"ERRO ao incrementar contagem: {e}")
 
 async def get_count(guild_id: int, user_id: int) -> int:
+    """Obtém a contagem de mensagens do cache + banco"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return 0
     
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}&select=count",
-                headers={
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}"
-                }
-            )
-            data = response.json()
-            return data[0]['count'] if data else 0
-        except Exception as e:
-            print(f"ERRO ao obter contagem: {e}")
-            return 0
+    async with cache_lock:
+        cache_value = message_cache[guild_id][user_id]
+    
+    async def do_request(client):
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&user_id=eq.{user_id}&select=count",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}"
+            }
+        )
+        data = response.json()
+        return data[0]['count'] if data else 0
+    
+    try:
+        db_value = await supabase_request_with_retry(do_request)
+        return db_value + cache_value
+    except Exception as e:
+        print(f"ERRO ao obter contagem: {e}")
+        return cache_value
 
 async def get_top_users(guild_id: int, limit: int = 5):
     """Retorna os top usuários por contagem"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return []
     
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&order=count.desc&limit={limit}",
-                headers={
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}"
-                }
-            )
-            return response.json()
-        except Exception as e:
-            print(f"ERRO ao buscar ranking: {e}")
-            return []
+    async def do_request(client):
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{guild_id}&order=count.desc&limit={limit}",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}"
+            }
+        )
+        return response.json()
+    
+    try:
+        return await supabase_request_with_retry(do_request)
+    except Exception as e:
+        print(f"ERRO ao buscar ranking: {e}")
+        return []
+
+async def sync_cache_to_supabase():
+    """Sincroniza o cache com o Supabase a cada 30 segundos"""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        await asyncio.sleep(30)
+        
+        async with cache_lock:
+            if not message_cache:
+                continue
+            
+            # Copia e limpa o cache
+            cache_copy = {}
+            for guild_id in message_cache:
+                cache_copy[guild_id] = dict(message_cache[guild_id])
+            message_cache.clear()
+        
+        # Sincroniza com o Supabase
+        for guild_id, users in cache_copy.items():
+            for user_id, count in users.items():
+                if count > 0:
+                    await increment_count_batch(guild_id, user_id, count)
+                    await asyncio.sleep(0.1)  # Pequeno delay entre requisições
 
 # ================ Restrição de canal ================
 CANAL_PERMITIDO = 1500291470530314331
@@ -167,24 +253,36 @@ async def global_text_channel_restriction(ctx):
     return False
 
 # ================ Eventos ================
+FIRST_RUN = True
+
 @bot.event
 async def on_ready():
+    global FIRST_RUN
     await init_db()
     print(f'{bot.user} online')
     await bot.change_presence(activity=discord.Game("Use /comando"))
-    try:
-        synced = await bot.tree.sync()
-        print(f"Slash commands sincronizados: {len(synced)} comandos")
-        for cmd in synced:
-            print(f"  - /{cmd.name}")
-    except Exception as e:
-        print(f"Erro ao sincronizar comandos: {e}")
+    
+    # Só sincroniza na primeira execução
+    if FIRST_RUN:
+        try:
+            synced = await bot.tree.sync()
+            print(f"Slash commands sincronizados: {len(synced)} comandos")
+            FIRST_RUN = False
+        except Exception as e:
+            print(f"Erro ao sincronizar comandos: {e}")
+    
+    # Inicia a task de sincronização do cache
+    bot.loop.create_task(sync_cache_to_supabase())
 
 @bot.event
 async def on_message(message):
     if message.author.bot or not message.guild:
         return
-    await increment_count(message.guild.id, message.author.id)
+    
+    # Incrementa no cache local (sem chamar API)
+    async with cache_lock:
+        message_cache[message.guild.id][message.author.id] += 1
+    
     await bot.process_commands(message)
 
 @bot.event
@@ -210,6 +308,11 @@ async def on_member_join(member):
         except Exception as e:
             print(f"Erro ao enviar mensagem de boas-vindas: {e}")
 
+@bot.event
+async def on_error(event, *args, **kwargs):
+    print(f'Erro no evento {event}:')
+    traceback.print_exc()
+
 # ================ Cálculo de XP e Nível ================
 def get_xp(total):
     return (total // 5) * 3
@@ -233,8 +336,6 @@ async def slash_ban(interaction: discord.Interaction, membro: discord.Member, mo
         await interaction.response.send_message(f"{membro.mention} foi banido. Motivo: {motivo}")
     except Exception as e:
         await interaction.response.send_message(f"Erro ao banir: {e}", ephemeral=True)
-
-import re
 
 # ================ FUNÇÕES AUXILIARES PARA OS COMANDOS ================
 def extrair_emoji_do_nome(nome_canal):
@@ -307,8 +408,6 @@ def extrair_emoji_do_nome(nome_canal):
 
 def extrair_decoracao_do_nome(nome_canal):
     """Extrai a decoração do nome do canal (separador entre emoji e texto)"""
-    import re
-    
     emoji = extrair_emoji_do_nome(nome_canal)
     if emoji:
         nome_sem_emoji = nome_canal[len(emoji):]
@@ -342,8 +441,6 @@ def extrair_texto_puro(nome_canal):
 
 def extrair_emojis(texto):
     """Extrai emojis do texto, suportando emojis Unicode e personalizados do Discord"""
-    import re
-    
     custom_emoji_pattern = re.compile(r'<a?:\w+:\d+>')
     custom_emojis = custom_emoji_pattern.findall(texto)
     
@@ -452,6 +549,7 @@ async def slash_criar(interaction: discord.Interaction, canais: str, emoji: str 
         nome_final = nome_final.replace(" ", "-")
         
         try:
+            await discord_api_limiter.wait_if_needed()
             novo_canal = await interaction.guild.create_text_channel(
                 name=nome_final,
                 category=categoria,
@@ -560,6 +658,7 @@ async def slash_decorar(interaction: discord.Interaction, canal: str, emoji: str
                 continue
             
             if novo_nome != nome_atual:
+                await discord_api_limiter.wait_if_needed()
                 await canal_obj.edit(name=novo_nome, reason=f"Decorado por {interaction.user.display_name}")
                 canais_modificados.append((canal_obj, nome_atual, novo_nome))
             
@@ -683,6 +782,7 @@ async def prefix_decorar(ctx, canal_str: str = None, *, args: str = None):
                 continue
             
             if novo_nome != nome_atual:
+                await discord_api_limiter.wait_if_needed()
                 await canal_obj.edit(name=novo_nome, reason=f"Decorado por {ctx.author.display_name}")
                 canais_modificados.append((canal_obj, nome_atual, novo_nome))
             
@@ -802,6 +902,7 @@ async def prefix_criar(ctx, *, args: str = None):
         nome_final = "".join(partes_nome).replace(" ", "-")
         
         try:
+            await discord_api_limiter.wait_if_needed()
             novo_canal = await ctx.guild.create_text_channel(
                 name=nome_final,
                 category=categoria,
@@ -923,7 +1024,6 @@ async def slash_ppt(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view)
 
 # ================ FORCA ================
-# ================ FORCA COM MODAL ================
 jogos_forca = {}
 
 class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
@@ -1077,14 +1177,12 @@ def desenhar_forca(erros):
 @bot.tree.command(name="forca", description="🪢 Jogo da forca - adivinhe a palavra!")
 async def slash_forca(interaction: discord.Interaction):
     palavras = [
-        # Tecnologia/Programação
         "python", "java", "ruby", "swift", "dart", "rust", "perl",
         "html", "css", "json", "xml", "sql", "php", "node", "react",
         "angular", "django", "flask", "docker", "git", "linux", "ubuntu",
         "windows", "macos", "android", "kernel", "script", "query",
         "debug", "commit", "branch", "merge", "deploy", "server",
         "cloud", "proxy", "token", "cache", "buffer", "socket",
-        # Profissões
         "medico", "engenheiro", "professor", "bombeiro", "policial",
         "piloto", "chef", "mecanico", "eletricista", "encanador",
         "arquiteto", "dentista", "farmaceutico", "biologo", "quimico",
@@ -1092,7 +1190,6 @@ async def slash_forca(interaction: discord.Interaction):
         "jornalista", "escritor", "pintor", "escultor", "musico",
         "ator", "dancarino", "malabarista", "ilusionista", "palhaco",
         "carpinteiro", "ferreiro", "alfaiate", "marceneiro", "ourives",
-        # Frutas/Comidas
         "abacate", "ameixa", "caju", "caqui", "coco", "damasco",
         "figo", "framboesa", "graviola", "jabuticaba", "jaca",
         "kiwi", "lichia", "mamao", "maracuja", "melancia", "melao",
@@ -1102,16 +1199,14 @@ async def slash_forca(interaction: discord.Interaction):
         "pizza", "lasanha", "panqueca", "omelete", "risoto",
         "churrasco", "estrogonofe", "macarronada", "feijoada",
         "moqueca", "empadao", "nhoque", "sushi", "hamburguer",
-        # Animais
         "leopardo", "guepardo", "pantera", "lince", "jaguar",
         "puma", "suricato", "esquilo", "castor", "capivara",
         "lontra", "ariranha", "tamandua", "preguica", "tatu",
         "golfinho", "baleia", "tubarao", "polvo", "lula",
         "caranguejo", "lagosta", "camarao", "ostra", "molusco",
         "pavao", "flamingo", "tucano", "arara", "aguia",
-        "falcão", "coruja", "pinguim", "avestruz", "ema",
-        "canguru", "coala", "ornitorrinco", "equidna", "diabodatasmânia",
-        # Países/Cidades
+        "falcao", "coruja", "pinguim", "avestruz", "ema",
+        "canguru", "coala", "ornitorrinco", "equidna",
         "brasil", "argentina", "chile", "peru", "colombia",
         "venezuela", "equador", "uruguai", "paraguai", "bolivia",
         "alemanha", "franca", "italia", "espanha", "portugal",
@@ -1120,19 +1215,15 @@ async def slash_forca(interaction: discord.Interaction):
         "japao", "china", "coreia", "tailandia", "vietna",
         "egito", "marrocos", "nigeria", "angola", "mocambique",
         "paris", "londres", "toquio", "sidney", "moscou",
-        # Esportes/Jogos
         "futebol", "basquete", "tenis", "volei", "natacao",
-        "atletismo", "ginastica", "judô", "karatê", "boxe",
+        "atletismo", "ginastica", "judo", "karate", "boxe",
         "esgrima", "hipismo", "ciclismo", "surfe", "skate",
         "xadrez", "domino", "poquer", "truco", "buraco",
-        # Objetos
         "geladeira", "fogao", "microondas", "torradeira", "batedeira",
         "aspirador", "ferro", "secador", "liquidificador", "espremedor",
         "cadeira", "poltrona", "sofa", "cama", "colchao",
-        "guarda-roupa", "comoda", "estante", "prateleira", "armario",
         "televisao", "telefone", "tablet", "notebook", "impressora",
         "caneta", "lapis", "borracha", "caderno", "mochila",
-        # Natureza
         "montanha", "planicie", "deserto", "floresta", "pantano",
         "oceano", "lagoa", "cachoeira", "nascente", "geleira",
         "vulcao", "terremoto", "tsunami", "furacao", "tornado",
@@ -1426,7 +1517,6 @@ class PalavraModal(discord.ui.Modal, title="📝 Digite a palavra"):
             await interaction.response.edit_message(embed=embed, view=self.view_ref)
             return
         
-        # Dica visual com emojis
         dica = []
         for i, letra in enumerate(palavra_tentada):
             if i < len(jogo["palavra"]):
@@ -1496,53 +1586,45 @@ class EmbaralharView(discord.ui.View):
 @bot.tree.command(name="embaralhar", description="📝 Adivinhe a palavra embaralhada!")
 async def slash_embaralhar(interaction: discord.Interaction):
     palavras = [
-        # Sentimentos/Emoções
         "alegria", "tristeza", "raiva", "medo", "nojo",
         "surpresa", "calma", "ansiedade", "esperanca", "saudade",
         "ciume", "orgulho", "vergonha", "culpa", "gratidao",
         "empatia", "compaixao", "ternura", "paixao", "decepcao",
         "nostalgia", "euforia", "melancolia", "entusiasmo", "serenidade",
-        # Corpo humano
         "cabeca", "ombro", "joelho", "tornozelo", "pulso",
-        "cotovelo", "quadril", "cintura", "abdômen", "torax",
+        "cotovelo", "quadril", "cintura", "abdomen", "torax",
         "cranio", "clavicula", "escapula", "esterno", "vertebra",
         "femur", "tibia", "fibula", "patela", "umero",
-        "cerebro", "coração", "pulmao", "figado", "rim",
+        "cerebro", "coracao", "pulmao", "figado", "rim",
         "estomago", "intestino", "pancreas", "baco", "vesicula",
-        # Adjetivos/Características
         "bonito", "inteligente", "rapido", "devagar", "forte",
         "fraco", "corajoso", "covarde", "generoso", "egoista",
         "honesto", "mentiroso", "leal", "traidor", "humilde",
         "arrogante", "paciente", "impaciente", "criativo", "monotono",
         "elegante", "desajeitado", "simpatico", "antipatico", "carismatico",
-        # Ações/Verbos
         "caminhar", "correr", "nadar", "voar", "saltar",
         "dancar", "cantar", "gritar", "sussurrar", "chorar",
-        "sorrir", "abraçar", "beijar", "acariciar", "empurrar",
+        "sorrir", "abracar", "beijar", "acariciar", "empurrar",
         "puxar", "levantar", "abaixar", "girar", "inclinar",
         "cozinhar", "costurar", "pintar", "desenhar", "esculpir",
         "construir", "destruir", "plantar", "colher", "regar",
-        # Lugares/Ambientes
         "hospital", "escola", "igreja", "biblioteca", "cinema",
         "teatro", "estadio", "gimnasio", "piscina", "parque",
         "shopping", "mercado", "feira", "padaria", "acougue",
         "farmacia", "correio", "banco", "hotel", "restaurante",
         "aeroporto", "rodoviaria", "porto", "estacao", "terminal",
         "escritorio", "fabrica", "oficina", "laboratorio", "atelie",
-        # Ciência/Conhecimento
         "astronomia", "biologia", "quimica", "fisica", "matematica",
         "historia", "geografia", "filosofia", "sociologia", "psicologia",
         "antropologia", "arqueologia", "paleontologia", "oceanografia", "meteorologia",
         "algebra", "geometria", "trigonometria", "estatistica", "calculo",
         "gravidade", "magnetismo", "eletricidade", "atomo", "molecula",
         "celula", "bacteria", "virus", "fungo", "parasita",
-        # Música/Arte
-        "violao", "piano", "flauta", "bateria", "trompete",
+        "violao", "piano", "flauta", "bateria", "trombone",
         "saxofone", "clarinete", "violino", "violoncelo", "harpa",
         "partitura", "melodia", "harmonia", "ritmo", "sinfonia",
         "orquestra", "concerto", "recital", "musical", "cantata",
         "aquarela", "escultura", "ceramica", "mosaico", "vitral",
-        # Mitologia/Fantasia
         "dragao", "unicornio", "sereia", "centauro", "minotauro",
         "grifo", "fenix", "quimera", "hidra", "troll",
         "duende", "gnomo", "elfo", "ogro", "gigante",
@@ -1779,19 +1861,14 @@ async def slash_velha(interaction: discord.Interaction, adversario: discord.Memb
     pessoa2="Segunda pessoa"
 )
 async def slash_ship(interaction: discord.Interaction, pessoa1: str, pessoa2: str):
-    import random
-    
-    # Gera uma porcentagem "baseada" nos nomes para ser consistente
     seed = pessoa1.lower() + pessoa2.lower()
     random.seed(seed)
     porcentagem = random.randint(1, 100)
-    random.seed()  # Reseta o seed
+    random.seed()
     
-    # Barra de progresso
     barras = int(porcentagem / 10)
     barra = "[" + "❤️" * barras + "🖤" * (10 - barras) + "]"
     
-    # Mensagem baseada na porcentagem
     if porcentagem >= 90:
         mensagem = "💞 **Almas gêmeas!** Casamento perfeito!"
         cor = discord.Color.red()
@@ -1825,7 +1902,6 @@ async def slash_ship(interaction: discord.Interaction, pessoa1: str, pessoa2: st
 )
 @app_commands.default_permissions(administrator=True)
 async def slash_saycanal(interaction: discord.Interaction, canal: discord.TextChannel, mensagem: str):
-    # Verifica se o bot tem permissão no canal
     if not canal.permissions_for(interaction.guild.me).send_messages:
         await interaction.response.send_message(
             f"❌ Não tenho permissão para enviar mensagens em {canal.mention}!",
@@ -1833,7 +1909,6 @@ async def slash_saycanal(interaction: discord.Interaction, canal: discord.TextCh
         )
         return
     
-    # Envia a mensagem no canal escolhido
     try:
         await canal.send(mensagem)
         await interaction.response.send_message(
@@ -1853,7 +1928,6 @@ async def slash_saycanal(interaction: discord.Interaction, canal: discord.TextCh
 )
 @app_commands.default_permissions(manage_roles=True)
 async def slash_role(interaction: discord.Interaction, membro: discord.Member, cargo: discord.Role):
-    # Verifica se o bot pode gerenciar o cargo
     if cargo >= interaction.guild.me.top_role:
         await interaction.response.send_message(
             "❌ Não posso gerenciar esse cargo! Ele está acima do meu cargo mais alto.",
@@ -1861,7 +1935,6 @@ async def slash_role(interaction: discord.Interaction, membro: discord.Member, c
         )
         return
     
-    # Verifica se o ADM pode gerenciar o cargo
     if cargo >= interaction.user.top_role and interaction.user != interaction.guild.owner:
         await interaction.response.send_message(
             "❌ Você não pode gerenciar esse cargo! Está acima ou igual ao seu cargo mais alto.",
@@ -1869,9 +1942,7 @@ async def slash_role(interaction: discord.Interaction, membro: discord.Member, c
         )
         return
     
-    # Verifica se o usuário já tem o cargo
     if cargo in membro.roles:
-        # Remove o cargo
         try:
             await membro.remove_roles(cargo, reason=f"Removido por {interaction.user.display_name}")
             
@@ -1888,7 +1959,6 @@ async def slash_role(interaction: discord.Interaction, membro: discord.Member, c
                 ephemeral=True
             )
     else:
-        # Adiciona o cargo
         try:
             await membro.add_roles(cargo, reason=f"Adicionado por {interaction.user.display_name}")
             
