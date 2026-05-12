@@ -220,14 +220,53 @@ async def sync_cache_to_supabase():
                     await asyncio.sleep(0.1)  # Pequeno delay entre requisições
 
 # ================ Restrição de canal ================
+import discord
+from discord.ext import commands
+
 CANAL_PERMITIDO = 1500291470530314331
 
+def autorizado_em_canal(usuario: discord.Member, canal_id: int) -> bool:
+    """Retorna True se usuário for administrador ou se canal_id for o permitido."""
+    if usuario.guild_permissions.administrator:
+        return True
+    return canal_id == CANAL_PERMITIDO
+
+# Check para comandos de texto (prefixados)
+@bot.check
+async def restricao_canal_texto(ctx: commands.Context) -> bool:
+    canal_id = ctx.channel.id
+    # Se for uma thread, use o ID do canal pai
+    if isinstance(ctx.channel, discord.Thread):
+        canal_id = ctx.channel.parent_id
+
+    if autorizado_em_canal(ctx.author, canal_id):
+        return True
+
+    try:
+        await ctx.send(
+            f"❌ Comandos só podem ser usados no canal <#{CANAL_PERMITIDO}>. "
+            "Administradores podem usar em qualquer lugar.",
+            delete_after=10
+        )
+    except discord.Forbidden:
+        pass  # Sem permissão para enviar a mensagem de erro, mas ainda bloqueia
+    return False
+
+# Check para interações (slash commands)
 @bot.tree.interaction_check
-async def global_channel_restriction(interaction: discord.Interaction) -> bool:
-    if interaction.user.guild_permissions.administrator:
+async def restricao_canal_interaction(interaction: discord.Interaction) -> bool:
+    # interaction.channel pode ser None em raros casos, mas não em guilds
+    if interaction.channel is None:
+        return False  # ou True, dependendo do seu caso
+
+    canal_id = interaction.channel.id
+    # Se for uma thread, use o ID do canal pai
+    if isinstance(interaction.channel, discord.Thread):
+        canal_id = interaction.channel.parent_id
+
+    if autorizado_em_canal(interaction.user, canal_id):
         return True
-    if interaction.channel_id == CANAL_PERMITIDO:
-        return True
+
     try:
         if not interaction.response.is_done():
             await interaction.response.send_message(
@@ -235,21 +274,8 @@ async def global_channel_restriction(interaction: discord.Interaction) -> bool:
                 "Administradores podem usar em qualquer lugar.",
                 ephemeral=True
             )
-    except:
+    except (discord.Forbidden, discord.HTTPException):
         pass
-    return False
-
-@bot.check
-async def global_text_channel_restriction(ctx):
-    if ctx.author.guild_permissions.administrator:
-        return True
-    if ctx.channel.id == CANAL_PERMITIDO:
-        return True
-    await ctx.send(
-        f"❌ Comandos só podem ser usados no canal <#{CANAL_PERMITIDO}>. "
-        "Administradores podem usar em qualquer lugar.",
-        delete_after=10
-    )
     return False
 
 # ================ Eventos ================
