@@ -949,14 +949,6 @@ class PPTView(discord.ui.View):
             if interaction.user.id not in [self.jogador1_id, self.jogador2_id]:
                 await interaction.response.send_message("❌ Você não faz parte deste jogo!", ephemeral=True)
                 return False
-            
-            # Verifica se o jogador já escolheu
-            if interaction.user.id == self.jogador1_id and self.jogador1_pronto:
-                await interaction.response.send_message("❌ Você já fez sua escolha! Aguarde o adversário.", ephemeral=True)
-                return False
-            if interaction.user.id == self.jogador2_id and self.jogador2_pronto:
-                await interaction.response.send_message("❌ Você já fez sua escolha! Aguarde o adversário.", ephemeral=True)
-                return False
         
         return True
 
@@ -998,9 +990,14 @@ class PPTView(discord.ui.View):
         self.tesoura.disabled = not enabled
 
     async def processar_escolha(self, interaction: discord.Interaction, escolha: str):
-        if self.finished:
-            await interaction.response.send_message("Jogo já finalizado! Clique em **Reiniciar** para jogar novamente.", ephemeral=True)
-            return
+        # Verifica se o jogador já escolheu (apenas no multiplayer)
+        if self.jogador2_id is not None:
+            if interaction.user.id == self.jogador1_id and self.jogador1_pronto:
+                await interaction.response.send_message("❌ Você já fez sua escolha! Aguarde o adversário.", ephemeral=True)
+                return
+            if interaction.user.id == self.jogador2_id and self.jogador2_pronto:
+                await interaction.response.send_message("❌ Você já fez sua escolha! Aguarde o adversário.", ephemeral=True)
+                return
         
         # Registra a escolha
         if interaction.user.id == self.jogador1_id:
@@ -1063,7 +1060,6 @@ class PPTView(discord.ui.View):
         if escolha1 == escolha2:
             resultado = "🤝 **Empate!**"
             cor = discord.Color.greyple()
-            vencedor = None
         elif (escolha1 == "pedra" and escolha2 == "tesoura") or \
              (escolha1 == "papel" and escolha2 == "pedra") or \
              (escolha1 == "tesoura" and escolha2 == "papel"):
@@ -1072,14 +1068,12 @@ class PPTView(discord.ui.View):
             else:
                 resultado = f"🎉 **{nome1} ganhou!**"
             cor = discord.Color.green()
-            vencedor = self.jogador1_id
         else:
             if self.jogador2_id is None:
                 resultado = "😢 **Você perdeu!**"
             else:
                 resultado = f"🎉 **{nome2} ganhou!**"
             cor = discord.Color.red()
-            vencedor = self.jogador2_id if self.jogador2_id else "IA"
         
         # Cria o embed
         if self.jogador2_id is None:
@@ -1108,6 +1102,13 @@ class PPTView(discord.ui.View):
 
     @discord.ui.button(label="🔄 Reiniciar", style=discord.ButtonStyle.green, disabled=True)
     async def reiniciar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Verifica se é um dos jogadores
+        if self.jogador2_id is not None:
+            if interaction.user.id not in [self.jogador1_id, self.jogador2_id]:
+                await interaction.response.send_message("❌ Você não faz parte deste jogo!", ephemeral=True)
+                return
+        
+        # Reseta o estado do jogo
         self.finished = False
         self.escolha_jogador1 = None
         self.escolha_jogador2 = None
@@ -1180,7 +1181,21 @@ async def slash_ppt(interaction: discord.Interaction, adversario: discord.Member
 
 # ================ FORCA ================
 # ================ FORCA (MULTIPLAYER E IA) ================
+# ================ FORCA (MULTIPLAYER E IA) ================
 jogos_forca = {}
+
+def desenhar_forca(erros):
+    """Desenha o boneco da forca baseado no número de erros"""
+    estagios = [
+        "```\n  +---+\n  |   |\n      |\n      |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n      |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n  |   |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|   |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n      |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n /    |\n      |\n=========\n```",
+        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n / \\  |\n      |\n=========\n```"
+    ]
+    return estagios[min(erros, 6)]
 
 class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
     def __init__(self, jogos_ref, user_id, view, is_multiplayer=False):
@@ -1230,7 +1245,6 @@ class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
         # Vitória
         if "_" not in palavra_escondida:
             if self.is_multiplayer:
-                # Determina quem ganhou
                 vencedor_id = interaction.user.id
                 guild = interaction.guild
                 vencedor = guild.get_member(vencedor_id)
@@ -1294,7 +1308,6 @@ class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
         
         # Continua o jogo
         if self.is_multiplayer:
-            # Alterna o turno
             jogo["vez"] = jogo["jogador2"] if jogo["vez"] == jogo["jogador1"] else jogo["jogador1"]
             
             guild = interaction.guild
@@ -1346,12 +1359,10 @@ class ForcaView(discord.ui.View):
             await interaction.response.send_message("❌ Jogo não encontrado!", ephemeral=True)
             return False
         
-        # No modo IA, só o criador pode jogar
         if not jogo.get("multiplayer", False):
             if interaction.user.id != self.author_id:
                 await interaction.response.send_message("❌ Só quem iniciou pode jogar!", ephemeral=True)
                 return False
-        # No modo multiplayer, ambos podem jogar
         else:
             if interaction.user.id not in [jogo["jogador1"], jogo["jogador2"]]:
                 await interaction.response.send_message("❌ Você não faz parte deste jogo!", ephemeral=True)
@@ -1422,14 +1433,12 @@ class ForcaView(discord.ui.View):
 )
 async def slash_forca(interaction: discord.Interaction, adversario: discord.Member = None):
     palavras = [
-        # Tecnologia/Programação
         "python", "java", "ruby", "swift", "dart", "rust", "perl",
         "html", "css", "json", "xml", "sql", "php", "node", "react",
         "angular", "django", "flask", "docker", "git", "linux", "ubuntu",
         "windows", "macos", "android", "kernel", "script", "query",
         "debug", "commit", "branch", "merge", "deploy", "server",
         "cloud", "proxy", "token", "cache", "buffer", "socket",
-        # Profissões
         "medico", "engenheiro", "professor", "bombeiro", "policial",
         "piloto", "chef", "mecanico", "eletricista", "encanador",
         "arquiteto", "dentista", "farmaceutico", "biologo", "quimico",
@@ -1437,7 +1446,6 @@ async def slash_forca(interaction: discord.Interaction, adversario: discord.Memb
         "jornalista", "escritor", "pintor", "escultor", "musico",
         "ator", "dancarino", "malabarista", "ilusionista", "palhaco",
         "carpinteiro", "ferreiro", "alfaiate", "marceneiro", "ourives",
-        # Frutas/Comidas
         "abacate", "ameixa", "caju", "caqui", "coco", "damasco",
         "figo", "framboesa", "graviola", "jabuticaba", "jaca",
         "kiwi", "lichia", "mamao", "maracuja", "melancia", "melao",
@@ -1447,7 +1455,6 @@ async def slash_forca(interaction: discord.Interaction, adversario: discord.Memb
         "pizza", "lasanha", "panqueca", "omelete", "risoto",
         "churrasco", "estrogonofe", "macarronada", "feijoada",
         "moqueca", "empadao", "nhoque", "sushi", "hamburguer",
-        # Animais
         "leopardo", "guepardo", "pantera", "lince", "jaguar",
         "puma", "suricato", "esquilo", "castor", "capivara",
         "lontra", "ariranha", "tamandua", "preguica", "tatu",
@@ -1456,7 +1463,6 @@ async def slash_forca(interaction: discord.Interaction, adversario: discord.Memb
         "pavao", "flamingo", "tucano", "arara", "aguia",
         "falcao", "coruja", "pinguim", "avestruz", "ema",
         "canguru", "coala", "ornitorrinco", "equidna",
-        # Países/Cidades
         "brasil", "argentina", "chile", "peru", "colombia",
         "venezuela", "equador", "uruguai", "paraguai", "bolivia",
         "alemanha", "franca", "italia", "espanha", "portugal",
@@ -1465,25 +1471,21 @@ async def slash_forca(interaction: discord.Interaction, adversario: discord.Memb
         "japao", "china", "coreia", "tailandia", "vietna",
         "egito", "marrocos", "nigeria", "angola", "mocambique",
         "paris", "londres", "toquio", "sidney", "moscou",
-        # Esportes/Jogos
         "futebol", "basquete", "tenis", "volei", "natacao",
         "atletismo", "ginastica", "judo", "karate", "boxe",
         "esgrima", "hipismo", "ciclismo", "surfe", "skate",
         "xadrez", "domino", "poquer", "truco", "buraco",
-        # Objetos
         "geladeira", "fogao", "microondas", "torradeira", "batedeira",
         "aspirador", "ferro", "secador", "liquidificador", "espremedor",
         "cadeira", "poltrona", "sofa", "cama", "colchao",
         "televisao", "telefone", "tablet", "notebook", "impressora",
         "caneta", "lapis", "borracha", "caderno", "mochila",
-        # Natureza
         "montanha", "planicie", "deserto", "floresta", "pantano",
         "oceano", "lagoa", "cachoeira", "nascente", "geleira",
         "vulcao", "terremoto", "tsunami", "furacao", "tornado",
         "relampago", "trovao", "chuva", "granizo", "nevasca"
     ]
     
-    # Verificações para modo multiplayer
     if adversario:
         if adversario.bot:
             await interaction.response.send_message("❌ Você não pode jogar contra bots! Use o modo IA (sem mencionar ninguém).", ephemeral=True)
@@ -1492,7 +1494,6 @@ async def slash_forca(interaction: discord.Interaction, adversario: discord.Memb
             await interaction.response.send_message("❌ Você não pode jogar contra si mesmo! Use o modo IA para jogar sozinho.", ephemeral=True)
             return
         
-        # Verifica se algum dos jogadores já está em um jogo
         for jogo_id, jogo_data in jogos_forca.items():
             jogadores = []
             if jogo_data.get("multiplayer", False):
@@ -1507,7 +1508,6 @@ async def slash_forca(interaction: discord.Interaction, adversario: discord.Memb
         jogo_id = f"{interaction.user.id}_{adversario.id}"
         multiplayer = True
     else:
-        # Modo IA
         if interaction.user.id in jogos_forca:
             await interaction.response.send_message("❌ Você já tem um jogo em andamento!", ephemeral=True)
             return
@@ -1515,7 +1515,6 @@ async def slash_forca(interaction: discord.Interaction, adversario: discord.Memb
         jogo_id = interaction.user.id
         multiplayer = False
     
-    # Inicializa o jogo
     palavra = random.choice(palavras)
     
     if multiplayer:
@@ -1527,7 +1526,7 @@ async def slash_forca(interaction: discord.Interaction, adversario: discord.Memb
             "multiplayer": True,
             "jogador1": interaction.user.id,
             "jogador2": adversario.id,
-            "vez": interaction.user.id  # Quem criou começa
+            "vez": interaction.user.id
         }
         
         palavra_escondida = " ".join(["\\_" for _ in palavra])
@@ -1575,9 +1574,6 @@ async def slash_forca(interaction: discord.Interaction, adversario: discord.Memb
     
     view = ForcaView(interaction.user.id, jogos_forca, jogo_id)
     await interaction.response.send_message(embed=embed, view=view)
-
-
-
 
 # ================ CARA OU COROA COM BOTÕES ================
 class CaraCoroaView(discord.ui.View):
