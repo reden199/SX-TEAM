@@ -384,6 +384,119 @@ async def prefix_addxp(ctx, xp: int):
         await ctx.send(embed=embed)
     else:
         await ctx.send("❌ Erro ao adicionar XP. Tente novamente.")
+
+# ================ COMANDO EXCLUSIVO PARA RESETAR PRÓPRIO XP ================
+@bot.tree.command(name="resetxp", description="[APENAS USUÁRIO ESPECÍFICO] Reseta seu XP para zero")
+async def slash_resetxp(interaction: discord.Interaction):
+    if interaction.user.id != USUARIO_PERMITIDO_XP:
+        await interaction.response.send_message("❌ Acesso negado! Este comando é restrito.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=False)
+    
+    try:
+        async def do_reset(client):
+            # Verifica se já existe registro
+            response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{interaction.guild.id}&user_id=eq.{interaction.user.id}&select=id",
+                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+            )
+            data = response.json()
+            if data:
+                # Atualiza contagem para 0
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{interaction.guild.id}&user_id=eq.{interaction.user.id}",
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    },
+                    json={"count": 0}
+                )
+            else:
+                # Cria registro com 0
+                await client.post(
+                    f"{SUPABASE_URL}/rest/v1/counts",
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    },
+                    json={"guild_id": interaction.guild.id, "user_id": interaction.user.id, "count": 0}
+                )
+        
+        await supabase_request_with_retry(do_reset)
+        
+        # Limpa o cache local para este usuário
+        async with cache_lock:
+            if interaction.guild.id in message_cache:
+                message_cache[interaction.guild.id][interaction.user.id] = 0
+        
+        embed = discord.Embed(
+            title="🔄 XP Resetado com Sucesso!",
+            description="Seu XP foi zerado. Agora você está no nível 0 com 0 XP.",
+            color=discord.Color.orange()
+        )
+        embed.set_footer(text="Use /xp para verificar.")
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Erro ao resetar XP: {e}", ephemeral=True)
+
+# Versão com prefixo (caso use)
+@bot.command(name='resetxp')
+async def prefix_resetxp(ctx):
+    if ctx.author.id != USUARIO_PERMITIDO_XP:
+        await ctx.send("❌ Acesso negado! Este comando é restrito.")
+        return
+    
+    try:
+        async def do_reset(client):
+            response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{ctx.guild.id}&user_id=eq.{ctx.author.id}&select=id",
+                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+            )
+            data = response.json()
+            if data:
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/counts?guild_id=eq.{ctx.guild.id}&user_id=eq.{ctx.author.id}",
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    },
+                    json={"count": 0}
+                )
+            else:
+                await client.post(
+                    f"{SUPABASE_URL}/rest/v1/counts",
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    },
+                    json={"guild_id": ctx.guild.id, "user_id": ctx.author.id, "count": 0}
+                )
+        
+        await supabase_request_with_retry(do_reset)
+        
+        async with cache_lock:
+            if ctx.guild.id in message_cache:
+                message_cache[ctx.guild.id][ctx.author.id] = 0
+        
+        embed = discord.Embed(
+            title="🔄 XP Resetado com Sucesso!",
+            description="Seu XP foi zerado.",
+            color=discord.Color.orange()
+        )
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"❌ Erro ao resetar XP: {e}")
+
+
         
 # ================ Eventos ================
 FIRST_RUN = True
