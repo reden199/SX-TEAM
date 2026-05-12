@@ -925,113 +925,270 @@ async def prefix_criar(ctx, *, args: str = None):
     await ctx.send(embed=embed)
 
 # ================ PPT COM BOTÕES ================
+# ================ PPT COM BOTÕES (MULTIPLAYER E IA) ================
 class PPTView(discord.ui.View):
-    def __init__(self, author_id):
-        super().__init__(timeout=30)
+    def __init__(self, author_id, jogador1_id, jogador2_id=None):
+        super().__init__(timeout=60)
         self.author_id = author_id
+        self.jogador1_id = jogador1_id
+        self.jogador2_id = jogador2_id  # None = modo IA
         self.finished = False
+        self.escolha_jogador1 = None
+        self.escolha_jogador2 = None
+        self.jogador1_pronto = False
+        self.jogador2_pronto = False
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message("❌ Só quem iniciou o jogo pode jogar!", ephemeral=True)
-            return False
+        if self.jogador2_id is None:
+            # Modo IA: só o criador pode jogar
+            if interaction.user.id != self.jogador1_id:
+                await interaction.response.send_message("❌ Só quem iniciou o jogo pode jogar!", ephemeral=True)
+                return False
+        else:
+            # Modo multiplayer: ambos podem jogar
+            if interaction.user.id not in [self.jogador1_id, self.jogador2_id]:
+                await interaction.response.send_message("❌ Você não faz parte deste jogo!", ephemeral=True)
+                return False
+            
+            # Verifica se o jogador já escolheu
+            if interaction.user.id == self.jogador1_id and self.jogador1_pronto:
+                await interaction.response.send_message("❌ Você já fez sua escolha! Aguarde o adversário.", ephemeral=True)
+                return False
+            if interaction.user.id == self.jogador2_id and self.jogador2_pronto:
+                await interaction.response.send_message("❌ Você já fez sua escolha! Aguarde o adversário.", ephemeral=True)
+                return False
+        
         return True
 
     async def on_timeout(self):
-        for child in self.children:
-            child.disabled = True
-        if hasattr(self, 'message'):
-            embed = self.message.embeds[0]
-            embed.add_field(name="⏰ Tempo esgotado!", value="Use /ppt para jogar novamente.", inline=False)
-            embed.color = discord.Color.light_grey()
-            await self.message.edit(embed=embed, view=self)
+        if not self.finished:
+            for child in self.children:
+                child.disabled = True
+            
+            if hasattr(self, 'message'):
+                embed = self.message.embeds[0]
+                
+                if self.jogador2_id is None:
+                    embed.add_field(name="⏰ Tempo esgotado!", value="Use /ppt para jogar novamente.", inline=False)
+                else:
+                    guild = self.message.guild if hasattr(self.message, 'guild') else None
+                    if guild:
+                        jogador1 = guild.get_member(self.jogador1_id)
+                        jogador2 = guild.get_member(self.jogador2_id)
+                        nome1 = jogador1.display_name if jogador1 else "Jogador 1"
+                        nome2 = jogador2.display_name if jogador2 else "Jogador 2"
+                    else:
+                        nome1 = "Jogador 1"
+                        nome2 = "Jogador 2"
+                    
+                    if self.jogador1_pronto and not self.jogador2_pronto:
+                        embed.add_field(name="⏰ Tempo esgotado!", value=f"{nome2} não escolheu a tempo!\n🏆 **{nome1} venceu por W.O.!**", inline=False)
+                    elif self.jogador2_pronto and not self.jogador1_pronto:
+                        embed.add_field(name="⏰ Tempo esgotado!", value=f"{nome1} não escolheu a tempo!\n🏆 **{nome2} venceu por W.O.!**", inline=False)
+                    else:
+                        embed.add_field(name="⏰ Tempo esgotado!", value="Ninguém escolheu a tempo! Use /ppt para jogar novamente.", inline=False)
+                
+                embed.color = discord.Color.light_grey()
+                self.finished = True
+                await self.message.edit(embed=embed, view=self)
 
     def enable_game_buttons(self, enabled: bool):
         self.pedra.disabled = not enabled
         self.papel.disabled = not enabled
         self.tesoura.disabled = not enabled
 
-    @discord.ui.button(label="🪨 Pedra", style=discord.ButtonStyle.gray)
-    async def pedra(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.processar(interaction, "pedra")
-
-    @discord.ui.button(label="📄 Papel", style=discord.ButtonStyle.gray)
-    async def papel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.processar(interaction, "papel")
-
-    @discord.ui.button(label="✂️ Tesoura", style=discord.ButtonStyle.gray)
-    async def tesoura(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.processar(interaction, "tesoura")
-
-    async def processar(self, interaction: discord.Interaction, escolha: str):
+    async def processar_escolha(self, interaction: discord.Interaction, escolha: str):
         if self.finished:
             await interaction.response.send_message("Jogo já finalizado! Clique em **Reiniciar** para jogar novamente.", ephemeral=True)
             return
         
+        # Registra a escolha
+        if interaction.user.id == self.jogador1_id:
+            self.escolha_jogador1 = escolha
+            self.jogador1_pronto = True
+        else:
+            self.escolha_jogador2 = escolha
+            self.jogador2_pronto = True
+        
+        # Modo IA: processa imediatamente
+        if self.jogador2_id is None:
+            self.escolha_jogador2 = random.choice(["pedra", "papel", "tesoura"])
+            self.jogador2_pronto = True
+            await self.mostrar_resultado(interaction)
+            return
+        
+        # Modo multiplayer: verifica se ambos já escolheram
+        if self.jogador1_pronto and self.jogador2_pronto:
+            await self.mostrar_resultado(interaction)
+            return
+        
+        # Apenas um jogador escolheu, mostra mensagem de espera
+        guild = interaction.guild
+        if self.jogador1_pronto:
+            jogador_pronto = guild.get_member(self.jogador1_id)
+            jogador_aguardando = guild.get_member(self.jogador2_id)
+        else:
+            jogador_pronto = guild.get_member(self.jogador2_id)
+            jogador_aguardando = guild.get_member(self.jogador1_id)
+        
+        embed = discord.Embed(
+            title="🪨📄✂️ Pedra, Papel e Tesoura (Multiplayer)",
+            description=f"✅ **{(jogador_pronto.display_name if jogador_pronto else 'Jogador')}** já escolheu!\n"
+                        f"⏳ Aguardando **{(jogador_aguardando.display_name if jogador_aguardando else 'outro jogador')}**...",
+            color=discord.Color.orange()
+        )
+        embed.set_footer(text=f"Jogadores: Aguardando...")
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def mostrar_resultado(self, interaction: discord.Interaction):
         self.finished = True
         self.enable_game_buttons(False)
         self.reiniciar.disabled = False
         
         opcoes = ["pedra", "papel", "tesoura"]
         emojis = {"pedra": "🪨", "papel": "📄", "tesoura": "✂️"}
-        bot_escolha = random.choice(opcoes)
         
-        if escolha == bot_escolha:
+        escolha1 = self.escolha_jogador1
+        escolha2 = self.escolha_jogador2
+        
+        guild = interaction.guild
+        jogador1 = guild.get_member(self.jogador1_id)
+        jogador2 = guild.get_member(self.jogador2_id) if self.jogador2_id else None
+        
+        nome1 = jogador1.display_name if jogador1 else "Jogador 1"
+        nome2 = jogador2.display_name if jogador2 else "IA do Bot"
+        
+        # Determina o resultado
+        if escolha1 == escolha2:
             resultado = "🤝 **Empate!**"
             cor = discord.Color.greyple()
-        elif (escolha == "pedra" and bot_escolha == "tesoura") or \
-             (escolha == "papel" and bot_escolha == "pedra") or \
-             (escolha == "tesoura" and bot_escolha == "papel"):
-            resultado = "🎉 **Você ganhou!**"
+            vencedor = None
+        elif (escolha1 == "pedra" and escolha2 == "tesoura") or \
+             (escolha1 == "papel" and escolha2 == "pedra") or \
+             (escolha1 == "tesoura" and escolha2 == "papel"):
+            if self.jogador2_id is None:
+                resultado = "🎉 **Você ganhou!**"
+            else:
+                resultado = f"🎉 **{nome1} ganhou!**"
             cor = discord.Color.green()
+            vencedor = self.jogador1_id
         else:
-            resultado = "😢 **Você perdeu!**"
+            if self.jogador2_id is None:
+                resultado = "😢 **Você perdeu!**"
+            else:
+                resultado = f"🎉 **{nome2} ganhou!**"
             cor = discord.Color.red()
+            vencedor = self.jogador2_id if self.jogador2_id else "IA"
         
-        embed = discord.Embed(title="🪨 Pedra | 📄 Papel | ✂️ Tesoura", color=cor)
-        embed.add_field(name="Você escolheu", value=f"{emojis[escolha]} {escolha.capitalize()}", inline=True)
-        embed.add_field(name="Bot escolheu", value=f"{emojis[bot_escolha]} {bot_escolha.capitalize()}", inline=True)
+        # Cria o embed
+        if self.jogador2_id is None:
+            embed = discord.Embed(title="🪨 Pedra | 📄 Papel | ✂️ Tesoura (vs IA)", color=cor)
+        else:
+            embed = discord.Embed(title="🪨 Pedra | 📄 Papel | ✂️ Tesoura (Multiplayer)", color=cor)
+        
+        embed.add_field(name=nome1, value=f"{emojis[escolha1]} {escolha1.capitalize()}", inline=True)
+        embed.add_field(name=nome2, value=f"{emojis[escolha2]} {escolha2.capitalize()}", inline=True)
         embed.add_field(name="Resultado", value=resultado, inline=False)
         embed.set_footer(text="Clique em Reiniciar para jogar novamente!")
         
         self.message = await interaction.response.edit_message(embed=embed, view=self)
 
+    @discord.ui.button(label="🪨 Pedra", style=discord.ButtonStyle.gray)
+    async def pedra(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.processar_escolha(interaction, "pedra")
+
+    @discord.ui.button(label="📄 Papel", style=discord.ButtonStyle.gray)
+    async def papel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.processar_escolha(interaction, "papel")
+
+    @discord.ui.button(label="✂️ Tesoura", style=discord.ButtonStyle.gray)
+    async def tesoura(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.processar_escolha(interaction, "tesoura")
+
     @discord.ui.button(label="🔄 Reiniciar", style=discord.ButtonStyle.green, disabled=True)
     async def reiniciar(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.finished = False
+        self.escolha_jogador1 = None
+        self.escolha_jogador2 = None
+        self.jogador1_pronto = False
+        self.jogador2_pronto = False
         self.enable_game_buttons(True)
         self.reiniciar.disabled = True
         
-        embed = discord.Embed(
-            title="🪨📄✂️ Pedra, Papel e Tesoura",
-            description="Clique em um dos botões abaixo para jogar!",
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+        if self.jogador2_id is None:
+            embed = discord.Embed(
+                title="🪨📄✂️ Pedra, Papel e Tesoura (vs IA)",
+                description="Clique em um dos botões abaixo para jogar!",
+                color=discord.Color.blue()
+            )
+            guild = interaction.guild
+            jogador1 = guild.get_member(self.jogador1_id)
+            embed.set_footer(text=f"Jogador: {jogador1.display_name if jogador1 else 'Você'} vs IA")
+        else:
+            guild = interaction.guild
+            jogador1 = guild.get_member(self.jogador1_id)
+            jogador2 = guild.get_member(self.jogador2_id)
+            nome1 = jogador1.display_name if jogador1 else "Jogador 1"
+            nome2 = jogador2.display_name if jogador2 else "Jogador 2"
+            
+            embed = discord.Embed(
+                title="🪨📄✂️ Pedra, Papel e Tesoura (Multiplayer)",
+                description=f"**{nome1}** VS **{nome2}**\n\nClique em um dos botões abaixo para jogar!\n"
+                            f"Ambos os jogadores devem fazer suas escolhas.",
+                color=discord.Color.blue()
+            )
+            embed.set_footer(text=f"Jogadores: {nome1} vs {nome2}")
         
         await interaction.response.edit_message(embed=embed, view=self)
 
-@bot.tree.command(name="ppt", description="🪨📄✂️ Joga Pedra, Papel e Tesoura contra o bot")
-async def slash_ppt(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🪨📄✂️ Pedra, Papel e Tesoura",
-        description="Clique em um dos botões abaixo para jogar!",
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+@bot.tree.command(name="ppt", description="🪨📄✂️ Joga Pedra, Papel e Tesoura contra o bot ou outro membro")
+@app_commands.describe(adversario="Oponente (deixe vazio para jogar contra IA)")
+async def slash_ppt(interaction: discord.Interaction, adversario: discord.Member = None):
+    if adversario:
+        if adversario.bot:
+            await interaction.response.send_message("❌ Você não pode jogar contra bots! Use o modo IA (sem mencionar ninguém).", ephemeral=True)
+            return
+        if adversario == interaction.user:
+            await interaction.response.send_message("❌ Você não pode jogar contra si mesmo! Use o modo IA para jogar sozinho.", ephemeral=True)
+            return
     
-    view = PPTView(interaction.user.id)
+    if adversario is None:
+        # Modo IA
+        embed = discord.Embed(
+            title="🪨📄✂️ Pedra, Papel e Tesoura (vs IA)",
+            description="Clique em um dos botões abaixo para jogar!",
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name} vs IA")
+        
+        view = PPTView(interaction.user.id, interaction.user.id, None)
+    else:
+        # Modo multiplayer
+        embed = discord.Embed(
+            title="🪨📄✂️ Pedra, Papel e Tesoura (Multiplayer)",
+            description=f"**{interaction.user.display_name}** VS **{adversario.display_name}**\n\n"
+                        f"Clique em um dos botões abaixo para fazer sua escolha!\n"
+                        f"Ambos os jogadores devem escolher para ver o resultado.",
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text=f"Jogadores: {interaction.user.display_name} vs {adversario.display_name}")
+        
+        view = PPTView(interaction.user.id, interaction.user.id, adversario.id)
+    
     await interaction.response.send_message(embed=embed, view=view)
 
 # ================ FORCA ================
+# ================ FORCA (MULTIPLAYER E IA) ================
 jogos_forca = {}
 
 class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
-    def __init__(self, jogos_ref, user_id, view):
+    def __init__(self, jogos_ref, user_id, view, is_multiplayer=False):
         super().__init__()
         self.jogos_ref = jogos_ref
         self.user_id = user_id
         self.view_ref = view
+        self.is_multiplayer = is_multiplayer
     
     letra = discord.ui.TextInput(
         label="Digite uma letra:",
@@ -1045,6 +1202,11 @@ class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
         jogo = self.jogos_ref.get(self.user_id)
         if not jogo:
             await interaction.response.send_message("Jogo não encontrado!", ephemeral=True)
+            return
+        
+        # Verifica se é multiplayer e se é a vez do jogador
+        if self.is_multiplayer and interaction.user.id != jogo["vez"]:
+            await interaction.response.send_message("❌ Não é sua vez!", ephemeral=True)
             return
         
         letra = self.letra.value.lower().strip()
@@ -1067,15 +1229,33 @@ class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
         
         # Vitória
         if "_" not in palavra_escondida:
-            embed = discord.Embed(
-                title="🎉 **VOCÊ GANHOU!**",
-                description=f"A palavra era: **{jogo['palavra'].upper()}**",
-                color=discord.Color.green()
-            )
-            embed.add_field(name="Erros", value=f"{jogo['erros']}/6", inline=True)
-            embed.add_field(name="Tentativas", value=letras_tentadas, inline=False)
+            if self.is_multiplayer:
+                # Determina quem ganhou
+                vencedor_id = interaction.user.id
+                guild = interaction.guild
+                vencedor = guild.get_member(vencedor_id)
+                jogador1 = guild.get_member(jogo["jogador1"])
+                jogador2 = guild.get_member(jogo["jogador2"])
+                
+                embed = discord.Embed(
+                    title="🎉 **TEMOS UM VENCEDOR!**",
+                    description=f"**{jogador1.display_name if jogador1 else 'Jogador 1'}** VS **{jogador2.display_name if jogador2 else 'Jogador 2'}**\n\n"
+                                f"A palavra era: **{jogo['palavra'].upper()}**\n\n"
+                                f"🏆 **{vencedor.mention if vencedor else 'Alguém'} acertou a palavra!**",
+                    color=discord.Color.green()
+                )
+            else:
+                embed = discord.Embed(
+                    title="🎉 **VOCÊ GANHOU!**",
+                    description=f"A palavra era: **{jogo['palavra'].upper()}**",
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="Erros", value=f"{jogo['erros']}/6", inline=True)
+                embed.add_field(name="Tentativas", value=letras_tentadas, inline=False)
+            
             embed.add_field(name="Forca", value=desenhar_forca(jogo["erros"]), inline=False)
             embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+            
             for child in self.view_ref.children:
                 child.disabled = True
             del self.jogos_ref[self.user_id]
@@ -1084,54 +1264,109 @@ class ForcaModal(discord.ui.Modal, title="🔤 Digite uma letra"):
         
         # Derrota
         if jogo["erros"] >= jogo["max_erros"]:
-            embed = discord.Embed(
-                title="💀 **VOCÊ PERDEU!**",
-                description=f"A palavra era: **{jogo['palavra'].upper()}**",
-                color=discord.Color.red()
-            )
+            if self.is_multiplayer:
+                guild = interaction.guild
+                jogador1 = guild.get_member(jogo["jogador1"])
+                jogador2 = guild.get_member(jogo["jogador2"])
+                
+                embed = discord.Embed(
+                    title="💀 **FIM DE JOGO!**",
+                    description=f"**{jogador1.display_name if jogador1 else 'Jogador 1'}** VS **{jogador2.display_name if jogador2 else 'Jogador 2'}**\n\n"
+                                f"A palavra era: **{jogo['palavra'].upper()}**\n\n"
+                                f"Ninguém acertou a palavra!",
+                    color=discord.Color.red()
+                )
+            else:
+                embed = discord.Embed(
+                    title="💀 **VOCÊ PERDEU!**",
+                    description=f"A palavra era: **{jogo['palavra'].upper()}**",
+                    color=discord.Color.red()
+                )
+            
             embed.add_field(name="Forca", value=desenhar_forca(6), inline=False)
             embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+            
             for child in self.view_ref.children:
                 child.disabled = True
             del self.jogos_ref[self.user_id]
             await interaction.response.edit_message(embed=embed, view=self.view_ref)
             return
         
-        # Continua
-        if letra in jogo["palavra"]:
-            msg_letra = f"✅ **{letra.upper()}** está na palavra!"
+        # Continua o jogo
+        if self.is_multiplayer:
+            # Alterna o turno
+            jogo["vez"] = jogo["jogador2"] if jogo["vez"] == jogo["jogador1"] else jogo["jogador1"]
+            
+            guild = interaction.guild
+            proximo = guild.get_member(jogo["vez"])
+            
+            if letra in jogo["palavra"]:
+                msg_letra = f"✅ **{letra.upper()}** está na palavra!"
+            else:
+                msg_letra = f"❌ **{letra.upper()}** não está na palavra!"
+            
+            embed = discord.Embed(
+                title="🪢 Jogo da Forca (Multiplayer)",
+                description=f"{msg_letra}\n\n"
+                            f"Vez de: {proximo.mention if proximo else 'Alguém'}\n\n"
+                            f"**Palavra:** {palavra_escondida}\n"
+                            f"**Letras tentadas:** {letras_tentadas}\n"
+                            f"**Erros:** {jogo['erros']}/6",
+                color=discord.Color.blue() if jogo["erros"] < 3 else discord.Color.orange()
+            )
         else:
-            msg_letra = f"❌ **{letra.upper()}** não está na palavra!"
+            if letra in jogo["palavra"]:
+                msg_letra = f"✅ **{letra.upper()}** está na palavra!"
+            else:
+                msg_letra = f"❌ **{letra.upper()}** não está na palavra!"
+            
+            cor = discord.Color.blue() if jogo["erros"] < 3 else discord.Color.orange() if jogo["erros"] < 5 else discord.Color.red()
+            
+            embed = discord.Embed(
+                title="🪢 Jogo da Forca (vs IA)",
+                description=f"{msg_letra}\n\n**Palavra:** {palavra_escondida}\n**Letras tentadas:** {letras_tentadas}\n**Erros:** {jogo['erros']}/6",
+                color=cor
+            )
         
-        cor = discord.Color.blue() if jogo["erros"] < 3 else discord.Color.orange() if jogo["erros"] < 5 else discord.Color.red()
-        
-        embed = discord.Embed(
-            title="🪢 Jogo da Forca",
-            description=f"{msg_letra}\n\n**Palavra:** {palavra_escondida}\n**Letras tentadas:** {letras_tentadas}\n**Erros:** {jogo['erros']}/6",
-            color=cor
-        )
         embed.add_field(name="Forca", value=desenhar_forca(jogo["erros"]), inline=False)
-        embed.set_footer(text=f"Jogador: {interaction.user.display_name} | Use 'Tentar Letra' ou 'Desistir'")
+        embed.set_footer(text=f"Jogadores: {interaction.user.display_name} | Use 'Tentar Letra' ou 'Desistir'")
         
         await interaction.response.edit_message(embed=embed, view=self.view_ref)
 
 class ForcaView(discord.ui.View):
-    def __init__(self, author_id, jogos_ref, user_id):
+    def __init__(self, author_id, jogos_ref, jogo_id):
         super().__init__(timeout=300)
         self.author_id = author_id
         self.jogos_ref = jogos_ref
-        self.user_id = user_id
+        self.jogo_id = jogo_id
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message("❌ Só quem iniciou pode jogar!", ephemeral=True)
+        jogo = self.jogos_ref.get(self.jogo_id)
+        if not jogo:
+            await interaction.response.send_message("❌ Jogo não encontrado!", ephemeral=True)
             return False
+        
+        # No modo IA, só o criador pode jogar
+        if not jogo.get("multiplayer", False):
+            if interaction.user.id != self.author_id:
+                await interaction.response.send_message("❌ Só quem iniciou pode jogar!", ephemeral=True)
+                return False
+        # No modo multiplayer, ambos podem jogar
+        else:
+            if interaction.user.id not in [jogo["jogador1"], jogo["jogador2"]]:
+                await interaction.response.send_message("❌ Você não faz parte deste jogo!", ephemeral=True)
+                return False
+            
+            if interaction.user.id != jogo["vez"]:
+                await interaction.response.send_message("❌ Não é sua vez!", ephemeral=True)
+                return False
+        
         return True
 
     async def on_timeout(self):
-        if self.user_id in self.jogos_ref:
-            palavra = self.jogos_ref[self.user_id]["palavra"]
-            del self.jogos_ref[self.user_id]
+        if self.jogo_id in self.jogos_ref:
+            palavra = self.jogos_ref[self.jogo_id]["palavra"]
+            del self.jogos_ref[self.jogo_id]
             for child in self.children:
                 child.disabled = True
             if hasattr(self, 'message'):
@@ -1142,47 +1377,59 @@ class ForcaView(discord.ui.View):
 
     @discord.ui.button(label="🔤 Tentar Letra", style=discord.ButtonStyle.green)
     async def tentar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = ForcaModal(self.jogos_ref, self.user_id, self)
-        await interaction.response.send_modal(modal)
-
-    @discord.ui.button(label="🏳️ Desistir", style=discord.ButtonStyle.red)
-    async def desistir(self, interaction: discord.Interaction, button: discord.ui.Button):
-        jogo = self.jogos_ref.get(self.user_id)
+        jogo = self.jogos_ref.get(self.jogo_id)
         if not jogo:
             await interaction.response.send_message("Jogo não encontrado!", ephemeral=True)
             return
         
-        embed = discord.Embed(
-            title="🏳️ Você desistiu!",
-            description=f"A palavra era: **{jogo['palavra'].upper()}**",
-            color=discord.Color.light_grey()
-        )
+        modal = ForcaModal(self.jogos_ref, self.jogo_id, self, jogo.get("multiplayer", False))
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="🏳️ Desistir", style=discord.ButtonStyle.red)
+    async def desistir(self, interaction: discord.Interaction, button: discord.ui.Button):
+        jogo = self.jogos_ref.get(self.jogo_id)
+        if not jogo:
+            await interaction.response.send_message("Jogo não encontrado!", ephemeral=True)
+            return
+        
+        if jogo.get("multiplayer", False):
+            guild = interaction.guild
+            adversario_id = jogo["jogador2"] if interaction.user.id == jogo["jogador1"] else jogo["jogador1"]
+            adversario = guild.get_member(adversario_id)
+            
+            embed = discord.Embed(
+                title="🏳️ Jogador desistiu!",
+                description=f"{interaction.user.mention} desistiu!\n"
+                            f"🏆 **{adversario.mention if adversario else 'Adversário'} venceu por W.O.!**\n\n"
+                            f"A palavra era: **{jogo['palavra'].upper()}**",
+                color=discord.Color.orange()
+            )
+        else:
+            embed = discord.Embed(
+                title="🏳️ Você desistiu!",
+                description=f"A palavra era: **{jogo['palavra'].upper()}**",
+                color=discord.Color.light_grey()
+            )
+        
         for child in self.children:
             child.disabled = True
-        del self.jogos_ref[self.user_id]
+        del self.jogos_ref[self.jogo_id]
         await interaction.response.edit_message(embed=embed, view=self)
 
-def desenhar_forca(erros):
-    estagios = [
-        "```\n  +---+\n  |   |\n      |\n      |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n      |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n  |   |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n /|   |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n      |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n /    |\n      |\n=========\n```",
-        "```\n  +---+\n  |   |\n  O   |\n /|\\  |\n / \\  |\n      |\n=========\n```"
-    ]
-    return estagios[min(erros, 6)]
-
-@bot.tree.command(name="forca", description="🪢 Jogo da forca - adivinhe a palavra!")
-async def slash_forca(interaction: discord.Interaction):
+@bot.tree.command(name="forca", description="🪢 Jogo da forca - escolha jogar contra IA ou outro membro!")
+@app_commands.describe(
+    adversario="Oponente (deixe vazio para jogar contra IA)"
+)
+async def slash_forca(interaction: discord.Interaction, adversario: discord.Member = None):
     palavras = [
+        # Tecnologia/Programação
         "python", "java", "ruby", "swift", "dart", "rust", "perl",
         "html", "css", "json", "xml", "sql", "php", "node", "react",
         "angular", "django", "flask", "docker", "git", "linux", "ubuntu",
         "windows", "macos", "android", "kernel", "script", "query",
         "debug", "commit", "branch", "merge", "deploy", "server",
         "cloud", "proxy", "token", "cache", "buffer", "socket",
+        # Profissões
         "medico", "engenheiro", "professor", "bombeiro", "policial",
         "piloto", "chef", "mecanico", "eletricista", "encanador",
         "arquiteto", "dentista", "farmaceutico", "biologo", "quimico",
@@ -1190,6 +1437,7 @@ async def slash_forca(interaction: discord.Interaction):
         "jornalista", "escritor", "pintor", "escultor", "musico",
         "ator", "dancarino", "malabarista", "ilusionista", "palhaco",
         "carpinteiro", "ferreiro", "alfaiate", "marceneiro", "ourives",
+        # Frutas/Comidas
         "abacate", "ameixa", "caju", "caqui", "coco", "damasco",
         "figo", "framboesa", "graviola", "jabuticaba", "jaca",
         "kiwi", "lichia", "mamao", "maracuja", "melancia", "melao",
@@ -1199,6 +1447,7 @@ async def slash_forca(interaction: discord.Interaction):
         "pizza", "lasanha", "panqueca", "omelete", "risoto",
         "churrasco", "estrogonofe", "macarronada", "feijoada",
         "moqueca", "empadao", "nhoque", "sushi", "hamburguer",
+        # Animais
         "leopardo", "guepardo", "pantera", "lince", "jaguar",
         "puma", "suricato", "esquilo", "castor", "capivara",
         "lontra", "ariranha", "tamandua", "preguica", "tatu",
@@ -1207,6 +1456,7 @@ async def slash_forca(interaction: discord.Interaction):
         "pavao", "flamingo", "tucano", "arara", "aguia",
         "falcao", "coruja", "pinguim", "avestruz", "ema",
         "canguru", "coala", "ornitorrinco", "equidna",
+        # Países/Cidades
         "brasil", "argentina", "chile", "peru", "colombia",
         "venezuela", "equador", "uruguai", "paraguai", "bolivia",
         "alemanha", "franca", "italia", "espanha", "portugal",
@@ -1215,55 +1465,119 @@ async def slash_forca(interaction: discord.Interaction):
         "japao", "china", "coreia", "tailandia", "vietna",
         "egito", "marrocos", "nigeria", "angola", "mocambique",
         "paris", "londres", "toquio", "sidney", "moscou",
+        # Esportes/Jogos
         "futebol", "basquete", "tenis", "volei", "natacao",
         "atletismo", "ginastica", "judo", "karate", "boxe",
         "esgrima", "hipismo", "ciclismo", "surfe", "skate",
         "xadrez", "domino", "poquer", "truco", "buraco",
+        # Objetos
         "geladeira", "fogao", "microondas", "torradeira", "batedeira",
         "aspirador", "ferro", "secador", "liquidificador", "espremedor",
         "cadeira", "poltrona", "sofa", "cama", "colchao",
         "televisao", "telefone", "tablet", "notebook", "impressora",
         "caneta", "lapis", "borracha", "caderno", "mochila",
+        # Natureza
         "montanha", "planicie", "deserto", "floresta", "pantano",
         "oceano", "lagoa", "cachoeira", "nascente", "geleira",
         "vulcao", "terremoto", "tsunami", "furacao", "tornado",
         "relampago", "trovao", "chuva", "granizo", "nevasca"
     ]
+    
+    # Verificações para modo multiplayer
+    if adversario:
+        if adversario.bot:
+            await interaction.response.send_message("❌ Você não pode jogar contra bots! Use o modo IA (sem mencionar ninguém).", ephemeral=True)
+            return
+        if adversario == interaction.user:
+            await interaction.response.send_message("❌ Você não pode jogar contra si mesmo! Use o modo IA para jogar sozinho.", ephemeral=True)
+            return
         
-    user_id = interaction.user.id
+        # Verifica se algum dos jogadores já está em um jogo
+        for jogo_id, jogo_data in jogos_forca.items():
+            jogadores = []
+            if jogo_data.get("multiplayer", False):
+                jogadores = [jogo_data["jogador1"], jogo_data["jogador2"]]
+            else:
+                jogadores = [jogo_data.get("jogador1")]
+            
+            if interaction.user.id in jogadores or adversario.id in jogadores:
+                await interaction.response.send_message("❌ Um dos jogadores já está em um jogo em andamento!", ephemeral=True)
+                return
+        
+        jogo_id = f"{interaction.user.id}_{adversario.id}"
+        multiplayer = True
+    else:
+        # Modo IA
+        if interaction.user.id in jogos_forca:
+            await interaction.response.send_message("❌ Você já tem um jogo em andamento!", ephemeral=True)
+            return
+        
+        jogo_id = interaction.user.id
+        multiplayer = False
     
-    if user_id in jogos_forca:
-        await interaction.response.send_message(
-            "❌ Você já tem um jogo em andamento!",
-            ephemeral=True
-        )
-        return
-    
+    # Inicializa o jogo
     palavra = random.choice(palavras)
-    jogos_forca[user_id] = {
-        "palavra": palavra,
-        "tentadas": [],
-        "erros": 0,
-        "max_erros": 6
-    }
     
-    palavra_escondida = " ".join(["\\_" for _ in palavra])
+    if multiplayer:
+        jogos_forca[jogo_id] = {
+            "palavra": palavra,
+            "tentadas": [],
+            "erros": 0,
+            "max_erros": 6,
+            "multiplayer": True,
+            "jogador1": interaction.user.id,
+            "jogador2": adversario.id,
+            "vez": interaction.user.id  # Quem criou começa
+        }
+        
+        palavra_escondida = " ".join(["\\_" for _ in palavra])
+        
+        embed = discord.Embed(
+            title="🪢 Jogo da Forca (Multiplayer)",
+            description=f"**{interaction.user.display_name}** VS **{adversario.display_name}**\n\n"
+                        f"Vez de: {interaction.user.mention}\n\n"
+                        f"**Palavra:** {palavra_escondida}\n\n"
+                        f"**Letras tentadas:** Nenhuma\n"
+                        f"**Erros:** 0/6",
+            color=discord.Color.blue()
+        )
+    else:
+        jogos_forca[jogo_id] = {
+            "palavra": palavra,
+            "tentadas": [],
+            "erros": 0,
+            "max_erros": 6,
+            "multiplayer": False,
+            "jogador1": interaction.user.id
+        }
+        
+        palavra_escondida = " ".join(["\\_" for _ in palavra])
+        
+        embed = discord.Embed(
+            title="🪢 Jogo da Forca (vs IA)",
+            description=f"**Palavra:** {palavra_escondida}\n\n"
+                        f"**Letras tentadas:** Nenhuma\n"
+                        f"**Erros:** 0/6",
+            color=discord.Color.blue()
+        )
     
-    embed = discord.Embed(
-        title="🪢 Jogo da Forca",
-        description=f"**Palavra:** {palavra_escondida}\n\n**Letras tentadas:** Nenhuma\n**Erros:** 0/6",
-        color=discord.Color.blue()
-    )
     embed.add_field(name="Forca", value=desenhar_forca(0), inline=False)
     embed.add_field(
         name="Como jogar",
         value="Clique em **🔤 Tentar Letra** para chutar uma letra\nClique em **🏳️ Desistir** para sair",
         inline=False
     )
-    embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
     
-    view = ForcaView(interaction.user.id, jogos_forca, user_id)
+    if multiplayer:
+        embed.set_footer(text=f"Jogadores: {interaction.user.display_name} vs {adversario.display_name}")
+    else:
+        embed.set_footer(text=f"Jogador: {interaction.user.display_name}")
+    
+    view = ForcaView(interaction.user.id, jogos_forca, jogo_id)
     await interaction.response.send_message(embed=embed, view=view)
+
+
+
 
 # ================ CARA OU COROA COM BOTÕES ================
 class CaraCoroaView(discord.ui.View):
