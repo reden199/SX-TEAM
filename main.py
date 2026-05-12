@@ -278,6 +278,113 @@ async def restricao_canal_interaction(interaction: discord.Interaction) -> bool:
         pass
     return False
 
+# ================ COMANDO EXCLUSIVO PARA ADICIONAR XP ================
+USUARIO_PERMITIDO_XP = 1157833912123404358  # Apenas este ID pode usar
+
+async def adicionar_xp_ao_usuario(guild_id: int, user_id: int, xp: int) -> bool:
+    """Converte XP em mensagens e adiciona ao usuário.
+    Retorna True se conseguiu, False se houve erro ou XP inválido."""
+    if xp <= 0:
+        return False
+    if xp % 3 != 0:
+        return False
+    
+    # Cada 3 XP equivalem a 5 mensagens
+    mensagens = (xp // 3) * 5
+    
+    # Atualiza diretamente no Supabase
+    try:
+        await increment_count_batch(guild_id, user_id, mensagens)
+        return True
+    except Exception as e:
+        print(f"Erro ao adicionar XP via comando: {e}")
+        return False
+
+# Slash command: /addxp
+@bot.tree.command(name="addxp", description="[APENAS USUÁRIO ESPECÍFICO] Adiciona XP à sua conta (múltiplo de 3)")
+@app_commands.describe(xp="Quantidade de XP a adicionar (deve ser múltiplo de 3)")
+async def slash_addxp(interaction: discord.Interaction, xp: int):
+    # Verifica se é o usuário autorizado
+    if interaction.user.id != USUARIO_PERMITIDO_XP:
+        await interaction.response.send_message(
+            "❌ **Acesso negado!** Este comando é restrito a um usuário específico.",
+            ephemeral=True
+        )
+        return
+    
+    if xp <= 0:
+        await interaction.response.send_message(
+            "❌ O XP deve ser um número positivo.",
+            ephemeral=True
+        )
+        return
+    
+    if xp % 3 != 0:
+        await interaction.response.send_message(
+            f"❌ O XP deve ser múltiplo de 3 (ex: 3, 6, 9, 12...). Você informou {xp}.",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.defer(ephemeral=False)
+    
+    sucesso = await adicionar_xp_ao_usuario(interaction.guild.id, interaction.user.id, xp)
+    
+    if sucesso:
+        # Busca o total atualizado para mostrar o novo total
+        total_mensagens = await get_count(interaction.guild.id, interaction.user.id)
+        xp_total = get_xp(total_mensagens)
+        nivel = get_level(xp_total)
+        
+        embed = discord.Embed(
+            title="✨ XP adicionado com sucesso!",
+            description=f"Foram adicionados **{xp} XP** à sua conta.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Seu XP total agora", value=f"**{xp_total} XP** (nível {nivel})", inline=False)
+        embed.add_field(name="Conversão", value=f"{xp} XP = {(xp // 3) * 5} mensagens adicionadas", inline=False)
+        embed.set_footer(text="A sincronização com o banco pode levar alguns segundos.")
+        await interaction.followup.send(embed=embed)
+    else:
+        await interaction.followup.send(
+            "❌ Ocorreu um erro ao adicionar XP. Verifique os logs ou tente novamente.",
+            ephemeral=True
+        )
+
+# Comando com prefixo (também restrito)
+@bot.command(name='addxp')
+async def prefix_addxp(ctx, xp: int):
+    # Verifica se é o usuário autorizado
+    if ctx.author.id != USUARIO_PERMITIDO_XP:
+        await ctx.send("❌ **Acesso negado!** Este comando é restrito a um usuário específico.")
+        return
+    
+    if xp <= 0:
+        await ctx.send("❌ O XP deve ser um número positivo.")
+        return
+    
+    if xp % 3 != 0:
+        await ctx.send(f"❌ O XP deve ser múltiplo de 3 (ex: 3, 6, 9, 12...). Você informou {xp}.")
+        return
+    
+    sucesso = await adicionar_xp_ao_usuario(ctx.guild.id, ctx.author.id, xp)
+    
+    if sucesso:
+        total_mensagens = await get_count(ctx.guild.id, ctx.author.id)
+        xp_total = get_xp(total_mensagens)
+        nivel = get_level(xp_total)
+        
+        embed = discord.Embed(
+            title="✨ XP adicionado com sucesso!",
+            description=f"Foram adicionados **{xp} XP** à sua conta.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Seu XP total agora", value=f"**{xp_total} XP** (nível {nivel})", inline=False)
+        embed.add_field(name="Conversão", value=f"{xp} XP = {(xp // 3) * 5} mensagens adicionadas", inline=False)
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send("❌ Erro ao adicionar XP. Tente novamente.")
+        
 # ================ Eventos ================
 FIRST_RUN = True
 
