@@ -494,23 +494,28 @@ class PainelRobloxView(discord.ui.View):
         super().__init__(timeout=None)
     
     @discord.ui.button(
-        label="🎮 Pedir Conta", 
+        label="Claim Account", 
         style=discord.ButtonStyle.green, 
-        custom_id="pedir_conta_roblox",
-        emoji="🎮"
+        custom_id="pedir_conta_roblox"
     )
     async def pedir_conta(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await eh_adm(interaction.user.id):
-            await interaction.response.send_message("❌ Acesso negado!", ephemeral=True)
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description="**Access Denied**\n*You are not authorized.*",
+                    color=0xE74C3C
+                ),
+                ephemeral=True
+            )
             return
         
         disponiveis = await contar_disponiveis()
         
         if disponiveis <= 0:
             embed_erro = discord.Embed(
-                title="📭 ESTOQUE VAZIO!",
-                description=f"😔 Não há contas disponíveis.\n📢 Peça a <@{DONO_ID}> para reabastecer!",
-                color=discord.Color.red()
+                title="Stock Depleted",
+                description=f"All accounts have been claimed.\nContact <@{DONO_ID}> to restock.",
+                color=0xE74C3C
             )
             await interaction.response.send_message(embed=embed_erro, ephemeral=True)
             return
@@ -519,73 +524,146 @@ class PainelRobloxView(discord.ui.View):
         conta = await pegar_conta(interaction.user.id)
         
         if not conta:
-            await interaction.followup.send("❌ Erro ao pegar conta.", ephemeral=True)
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description="**Error**\n*Failed to claim account. Try again.*",
+                    color=0xE74C3C
+                ),
+                ephemeral=True
+            )
             return
         
         embed_dm = discord.Embed(
-            title="🎮 Sua Conta Roblox",
-            description="✅ Guarde com segurança!",
-            color=discord.Color.green()
+            description="## Account Claimed\n*Keep this information secure.*",
+            color=0x1ABC9C,
+            timestamp=datetime.datetime.now()
         )
-        embed_dm.add_field(name="👤 Usuário", value=f"```{conta['usuario']}```", inline=True)
-        embed_dm.add_field(name="🔑 Senha", value=f"```{conta['senha']}```", inline=True)
+        
+        embed_dm.add_field(
+            name="Credentials",
+            value=f"**User:** `{conta['usuario']}`\n**Pass:** `{conta['senha']}`",
+            inline=False
+        )
         
         if conta.get('roblosecurity'):
-            embed_dm.add_field(name="🔐 .ROBLOSECURITY", value=f"```{conta['roblosecurity'][:100]}...```", inline=False)
+            embed_dm.add_field(
+                name="Security Token", 
+                value=f"```ansi\n\x1b[2;37m{conta['roblosecurity'][:80]}...\x1b[0m\n```",
+                inline=False
+            )
+        
         if conta.get('cookie'):
-            embed_dm.add_field(name="🍪 Cookie", value=f"```{conta['cookie'][:200]}...```", inline=False)
+            embed_dm.add_field(
+                name="Session Cookie", 
+                value=f"```ansi\n\x1b[2;37m{conta['cookie'][:120]}...\x1b[0m\n```",
+                inline=False
+            )
+        
+        embed_dm.set_footer(text="Auto-generated account")
         
         try:
             await interaction.user.send(embed=embed_dm)
-            await interaction.followup.send("✅ Conta enviada na sua DM!", ephemeral=True)
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description="**Sent to DMs**\n*Check your private messages.*",
+                    color=0x2ECC71
+                ),
+                ephemeral=True
+            )
         except:
             await interaction.followup.send(embed=embed_dm, ephemeral=True)
         
         await atualizar_painel(interaction)
 
-async def atualizar_painel(interaction=None):
-    if not interaction:
-        return
-    config = await carregar_config()
-    message_id = config.get('painel_message_id')
-    channel_id = config.get('painel_channel_id')
-    disponiveis = await contar_disponiveis()
-    total = await contar_total()
-    embed = criar_embed_painel(disponiveis, total)
-    
-    if message_id and channel_id:
-        try:
-            channel = interaction.guild.get_channel(channel_id)
-            if channel:
-                message = await channel.fetch_message(message_id)
-                await message.edit(embed=embed, view=PainelRobloxView())
-        except:
-            pass
-
 def criar_embed_painel(disponiveis, total):
+    """Cria um painel premium estilo dashboard"""
+    
+    # Paleta de cores premium
+    if disponiveis > 50:
+        cor = 0x1ABC9C  # Turquesa
+        status_text = "Optimal"
+        status_icon = "https://img.icons8.com/ios-filled/50/1ABC9C/ok--v1.png"
+    elif disponiveis > 20:
+        cor = 0x2ECC71  # Verde
+        status_text = "Healthy"
+        status_icon = "https://img.icons8.com/ios-filled/50/2ECC71/checkmark--v1.png"
+    elif disponiveis > 5:
+        cor = 0xF39C12  # Âmbar
+        status_text = "Low Stock"
+        status_icon = "https://img.icons8.com/ios-filled/50/F39C12/warning-shield--v1.png"
+    elif disponiveis > 0:
+        cor = 0xE74C3C  # Vermelho
+        status_text = "Critical"
+        status_icon = "https://img.icons8.com/ios-filled/50/E74C3C/error--v1.png"
+    else:
+        cor = 0x7F8C8D  # Cinza
+        status_text = "Depleted"
+        status_icon = "https://img.icons8.com/ios-filled/50/7F8C8D/cancel--v1.png"
+    
+    # Cálculos
+    usadas = total - disponiveis
     if total > 0:
-        porcentagem = disponiveis / total
-        barras_cheias = int(porcentagem * 20)
-        barras_vazias = 20 - barras_cheias
-        barra = "🟢" * barras_cheias + "⚫" * barras_vazias
+        porcentagem = int((disponiveis / total) * 100)
+        barras_preenchidas = int((disponiveis / total) * 8)
+        barras = "▰" * barras_preenchidas + "▱" * (8 - barras_preenchidas)
     else:
         porcentagem = 0
-        barra = "⚫" * 20
+        barras = "▱" * 8
     
-    embed = discord.Embed(
-        title="🤖 ROBLOX ACCOUNTS",
-        description=f"```\n┌─────────────────────────┐\n│                         │\n│   Contas Disponíveis    │\n│                         │\n│         {disponiveis:03d}             │\n│                         │\n└─────────────────────────┘\n```",
-        color=discord.Color.blue() if disponiveis > 10 else discord.Color.orange() if disponiveis > 0 else discord.Color.red()
+    embed = discord.Embed(color=cor, timestamp=datetime.datetime.now())
+    
+    # Banner superior elegante
+    embed.add_field(
+        name="",
+        value=f"```ansi\n\x1b[1;37mAccount Stock Dashboard\x1b[0m\n```",
+        inline=False
     )
-    embed.add_field(name="📊 Estatísticas", value=f"📦 Total: {total}\n✅ Disponíveis: {disponiveis}\n🎁 Entregues: {total - disponiveis}", inline=True)
-    embed.add_field(name="📈 Status", value=f"{barra}\n{int(porcentagem * 100)}% disponível", inline=False)
     
+    # Card principal com o número grande
+    embed.add_field(
+        name="Available",
+        value=f"```\n  {disponiveis:04d}\n```",
+        inline=True
+    )
+    
+    # Métricas rápidas
+    embed.add_field(
+        name="",
+        value=f"```\n{total:04d}  total\n{usadas:04d}  claimed\n```",
+        inline=True
+    )
+    
+    # Barra de progresso
+    embed.add_field(
+        name="Capacity",
+        value=f"`{barras}`  **{porcentagem}%**",
+        inline=False
+    )
+    
+    # Status com ícone
+    embed.add_field(
+        name="System Status",
+        value=f"```diff\n+ {status_text}\n```" if disponiveis > 0 else f"```diff\n- {status_text}\n```",
+        inline=True
+    )
+    
+    # Última atualização
+    embed.add_field(
+        name="Last Update",
+        value=f"<t:{int(datetime.datetime.now().timestamp())}:R>",
+        inline=True
+    )
+    
+    # Rodapé informativo
     if disponiveis == 0:
-        embed.add_field(name="🚨 ALERTA", value=f"Estoque zerado! Peça a <@{DONO_ID}> para reabastecer.", inline=False)
-    elif disponiveis <= 5:
-        embed.add_field(name="⚠️ Atenção", value="Estoque quase acabando!", inline=False)
+        embed.add_field(
+            name="",
+            value=f"*Depleted stock. Contact <@{DONO_ID}> for replenishment.*",
+            inline=False
+        )
     
-    embed.set_footer(text="Clique no botão abaixo • Apenas ADMs")
+    embed.set_footer(text="Roblox Account Manager  •  v2.0")
+    
     return embed
 
 # ================ COMANDOS SLASH ================
@@ -614,12 +692,16 @@ async def slash_addconta(interaction: discord.Interaction, usuario: str, senha: 
     await interaction.response.send_message(f"✅ Conta `{usuario}` adicionada!", ephemeral=True)
     await atualizar_painel(interaction)
 
-@bot.tree.command(name="estoque", description="📦 Mostra o estoque")
+@bot.tree.command(name="estoque", description="View account inventory")
 async def slash_estoque(interaction: discord.Interaction):
     if not await eh_adm(interaction.user.id):
-        return await interaction.response.send_message("❌ Acesso negado!", ephemeral=True)
+        return await interaction.response.send_message(
+            embed=discord.Embed(description="**Access Denied**", color=0xE74C3C),
+            ephemeral=True
+        )
     
     embed = criar_embed_painel(await contar_disponiveis(), await contar_total())
+    embed.set_footer(text="Inventory Check  •  Restricted")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="admroblox", description="👑 Gerencia ADMs (apenas dono)")
